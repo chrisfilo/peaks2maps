@@ -258,7 +258,7 @@ def load_examples():
         features = tf.parse_single_example(contents,
                                            features=feature)
         imageA = tf.decode_raw(features['imageA_raw'], tf.int16)
-        imageB = tf.decode_raw(features['imageB_raw'], tf.int16)
+        imageB = tf.decode_raw(features['imageB_raw'], tf.float32)
         height = tf.cast(features['height'], tf.int32)
         width = tf.cast(features['width'], tf.int32)
         image_shape = tf.stack([width, height, 1])
