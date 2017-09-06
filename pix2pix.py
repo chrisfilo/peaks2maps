@@ -239,50 +239,33 @@ def load_examples():
     if a.input_dir is None or not os.path.exists(a.input_dir):
         raise Exception("input_dir does not exist")
 
-    input_paths = glob.glob(os.path.join(a.input_dir, "*.jpg"))
-    decode = tf.image.decode_jpeg
-    if len(input_paths) == 0:
-        input_paths = glob.glob(os.path.join(a.input_dir, "*.png"))
-        decode = tf.image.decode_png
-
-    if len(input_paths) == 0:
-        raise Exception("input_dir contains no image files")
+    input_paths = glob.glob(os.path.join(a.input_dir, "*.tfrecords"))
 
     def get_name(path):
         name, _ = os.path.splitext(os.path.basename(path))
         return name
 
-    # if the image names are numbers, sort by the value rather than asciibetically
-    # having sorted inputs means that the outputs are sorted in test mode
-    if all(get_name(path).isdigit() for path in input_paths):
-        input_paths = sorted(input_paths, key=lambda path: int(get_name(path)))
-    else:
-        input_paths = sorted(input_paths)
-
     with tf.name_scope("load_images"):
         path_queue = tf.train.string_input_producer(input_paths, shuffle=a.mode == "train")
-        reader = tf.WholeFileReader()
+        reader = tf.TFRecordReader()
         paths, contents = reader.read(path_queue)
-        raw_input = decode(contents, channels=1)
-        raw_input = tf.image.convert_image_dtype(raw_input, dtype=tf.float32)
 
-        #assertion = tf.assert_equal(tf.shape(raw_input)[2], 3, message="image does not have 3 channels")
-        #with tf.control_dependencies([assertion]):
-        #    raw_input = tf.identity(raw_input)
+        feature = {'height': tf.FixedLenFeature([], tf.int64),
+                   'width': tf.FixedLenFeature([], tf.int64),
+                   'imageA_raw': tf.FixedLenFeature([], tf.string),
+                   'imageB_raw': tf.FixedLenFeature([], tf.string)}
 
-        raw_input.set_shape([None, None, 1])
+        features = tf.parse_single_example(contents,
+                                           features=feature)
+        imageA = tf.decode_raw(features['imageA_raw'], tf.int16)
+        imageB = tf.decode_raw(features['imageB_raw'], tf.int16)
+        height = tf.cast(features['height'], tf.int32)
+        width = tf.cast(features['width'], tf.int32)
+        image_shape = tf.stack([width, height, 1])
 
-        if a.lab_colorization:
-            # load color and brightness from image, no B image exists here
-            lab = rgb_to_lab(raw_input)
-            L_chan, a_chan, b_chan = preprocess_lab(lab)
-            a_images = tf.expand_dims(L_chan, axis=2)
-            b_images = tf.stack([a_chan, b_chan], axis=2)
-        else:
-            # break apart image pair and move to range [-1, 1]
-            width = tf.shape(raw_input)[1] # [height, width, channels]
-            a_images = preprocess(raw_input[:,:width//2,:])
-            b_images = preprocess(raw_input[:,width//2:,:])
+        a_images = tf.reshape(imageA, image_shape)
+        b_images = tf.reshape(imageB, image_shape)
+
 
     if a.which_direction == "AtoB":
         inputs, targets = [a_images, b_images]
