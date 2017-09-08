@@ -56,12 +56,13 @@ Model = collections.namedtuple("Model", "outputs, predict_real, predict_fake, di
 
 def conv(batch_input, out_channels, stride):
     with tf.variable_scope("conv"):
-        in_channels = batch_input.get_shape()[3]
-        filter = tf.get_variable("filter", [4, 4, in_channels, out_channels], dtype=tf.float32, initializer=tf.random_normal_initializer(0, 0.02))
+        in_channels = batch_input.get_shape()[-1]
+        filter = tf.get_variable("filter", [4, 4, 4, in_channels, out_channels], dtype=tf.float32, initializer=tf.random_normal_initializer(0, 0.02))
         # [batch, in_height, in_width, in_channels], [filter_width, filter_height, in_channels, out_channels]
         #     => [batch, out_height, out_width, out_channels]
-        padded_input = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="CONSTANT")
-        conv = tf.nn.conv2d(padded_input, filter, [1, stride, stride, 1], padding="VALID")
+        padded_input = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [1, 1], [0, 0]],
+                              mode="CONSTANT")
+        conv = tf.nn.conv3d(padded_input, filter, [1, stride, stride, stride, 1], padding="VALID")
         return conv
 
 
@@ -82,7 +83,7 @@ def batchnorm(input):
         # this block looks like it has 3 inputs on the graph unless we do this
         input = tf.identity(input)
 
-        channels = input.get_shape()[3]
+        channels = input.get_shape()[-1]
         offset = tf.get_variable("offset", [channels], dtype=tf.float32, initializer=tf.zeros_initializer())
         scale = tf.get_variable("scale", [channels], dtype=tf.float32, initializer=tf.random_normal_initializer(1.0, 0.02))
         mean, variance = tf.nn.moments(input, axes=[0, 1, 2], keep_dims=False)
@@ -93,11 +94,11 @@ def batchnorm(input):
 
 def deconv(batch_input, out_channels):
     with tf.variable_scope("deconv"):
-        batch, in_height, in_width, in_channels = [int(d) for d in batch_input.get_shape()]
-        filter = tf.get_variable("filter", [4, 4, out_channels, in_channels], dtype=tf.float32, initializer=tf.random_normal_initializer(0, 0.02))
+        batch, in_x, in_y, in_z, in_channels = [int(d) for d in batch_input.get_shape()]
+        filter = tf.get_variable("filter", [4, 4, 4, out_channels, in_channels], dtype=tf.float32, initializer=tf.random_normal_initializer(0, 0.02))
         # [batch, in_height, in_width, in_channels], [filter_width, filter_height, out_channels, in_channels]
         #     => [batch, out_height, out_width, out_channels]
-        conv = tf.nn.conv2d_transpose(batch_input, filter, [batch, in_height * 2, in_width * 2, out_channels], [1, 2, 2, 1], padding="SAME")
+        conv = tf.nn.conv3d_transpose(batch_input, filter, [batch, in_x * 2, in_y * 2, in_z * 2, out_channels], [1, 2, 2, 2, 1], padding="SAME")
         return conv
 
 
@@ -116,21 +117,22 @@ def load_examples():
         reader = tf.TFRecordReader()
         paths, contents = reader.read(path_queue)
 
-        feature = {'height': tf.FixedLenFeature([], tf.int64),
-                   'width': tf.FixedLenFeature([], tf.int64),
+        feature = {'x': tf.FixedLenFeature([], tf.int64),
+                   'y': tf.FixedLenFeature([], tf.int64),
+                   'z': tf.FixedLenFeature([], tf.int64),
                    'imageA_raw': tf.FixedLenFeature([], tf.string),
                    'imageB_raw': tf.FixedLenFeature([], tf.string)}
 
         features = tf.parse_single_example(contents,
                                            features=feature)
-        imageA = tf.decode_raw(features['imageA_raw'], tf.int16)
+        imageA = tf.decode_raw(features['imageA_raw'], tf.float32)
         imageB = tf.decode_raw(features['imageB_raw'], tf.float32)
-        height = tf.cast(features['height'], tf.int32)
-        width = tf.cast(features['width'], tf.int32)
-        image_shape = tf.stack([width, height, 1])
+        #height = tf.cast(features['height'], tf.int32)
+        #width = tf.cast(features['width'], tf.int32)
+        #image_shape = tf.stack([width, height, 1])
 
-        a_images = tf.reshape(imageA, image_shape)
-        b_images = tf.reshape(imageB, image_shape)
+        a_images = tf.reshape(imageA, [64, 64, 64, 1])
+        b_images = tf.reshape(imageB, [64, 64, 64, 1])
 
 
     if a.which_direction == "AtoB":
@@ -150,21 +152,22 @@ def load_examples():
 
         # area produces a nice downscaling, but does nearest neighbor for upscaling
         # assume we're going to be doing downscaling here
-        r = tf.image.resize_images(r, [a.scale_size, a.scale_size], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-        r = tf.cast(r, tf.float32)
+        r = tf.image.resize_images(r, [a.scale_size, a.scale_size], method=tf.image.ResizeMethod.AREA)
 
         offset = tf.cast(tf.floor(tf.random_uniform([2], 0, a.scale_size - CROP_SIZE + 1, seed=seed)), dtype=tf.int32)
         if a.scale_size > CROP_SIZE:
             r = tf.image.crop_to_bounding_box(r, offset[0], offset[1], CROP_SIZE, CROP_SIZE)
         elif a.scale_size < CROP_SIZE:
             raise Exception("scale size cannot be less than crop size")
+
+        r = tf.stack([r, r]*32)
         return r
 
     with tf.name_scope("input_images"):
-        input_images = transform(inputs)
+        input_images = inputs #transform(inputs)
 
     with tf.name_scope("target_images"):
-        target_images = transform(targets)
+        target_images = targets #transform(targets)
 
     paths_batch, inputs_batch, targets_batch = tf.train.batch([paths, input_images, target_images], batch_size=a.batch_size)
     steps_per_epoch = int(math.ceil(len(input_paths) / a.batch_size))
@@ -398,83 +401,26 @@ def main():
     if not os.path.exists(a.output_dir):
         os.makedirs(a.output_dir)
 
-    if a.mode == "test" or a.mode == "export":
-        if a.checkpoint is None:
-            raise Exception("checkpoint required for test mode")
-
-        # load some options from the checkpoint
-        options = {"which_direction", "ngf", "ndf", "lab_colorization"}
-        with open(os.path.join(a.checkpoint, "options.json")) as f:
-            for key, val in json.loads(f.read()).items():
-                if key in options:
-                    print("loaded", key, "=", val)
-                    setattr(a, key, val)
-        # disable these features in test mode
-        a.scale_size = CROP_SIZE
-        a.flip = False
+    # if a.mode == "test" or a.mode == "export":
+    #     if a.checkpoint is None:
+    #         raise Exception("checkpoint required for test mode")
+    #
+    #     # load some options from the checkpoint
+    #     options = {"which_direction", "ngf", "ndf", "lab_colorization"}
+    #     with open(os.path.join(a.checkpoint, "options.json")) as f:
+    #         for key, val in json.loads(f.read()).items():
+    #             if key in options:
+    #                 print("loaded", key, "=", val)
+    #                 setattr(a, key, val)
+    #     # disable these features in test mode
+    #     a.scale_size = CROP_SIZE
+    #     a.flip = False
 
     for k, v in a._get_kwargs():
         print(k, "=", v)
 
     with open(os.path.join(a.output_dir, "options.json"), "w") as f:
         f.write(json.dumps(vars(a), sort_keys=True, indent=4))
-
-    if a.mode == "export":
-        # export the generator to a meta graph that can be imported later for standalone generation
-        if a.lab_colorization:
-            raise Exception("export not supported for lab_colorization")
-
-        input = tf.placeholder(tf.string, shape=[1])
-        input_data = tf.decode_base64(input[0])
-        input_image = tf.image.decode_png(input_data)
-
-        # remove alpha channel if present
-        input_image = tf.cond(tf.equal(tf.shape(input_image)[2], 4), lambda: input_image[:,:,:3], lambda: input_image)
-        # convert grayscale to RGB
-        input_image = tf.cond(tf.equal(tf.shape(input_image)[2], 1), lambda: tf.image.grayscale_to_rgb(input_image), lambda: input_image)
-
-        input_image = tf.image.convert_image_dtype(input_image, dtype=tf.float32)
-        input_image.set_shape([CROP_SIZE, CROP_SIZE, 1])
-        batch_input = tf.expand_dims(input_image, axis=0)
-
-        with tf.variable_scope("generator"):
-            batch_output = deprocess(create_generator(preprocess(batch_input), 3))
-
-        output_image = tf.image.convert_image_dtype(batch_output, dtype=tf.uint8)[0]
-        if a.output_filetype == "png":
-            output_data = tf.image.encode_png(output_image)
-        elif a.output_filetype == "jpeg":
-            output_data = tf.image.encode_jpeg(output_image, quality=80)
-        else:
-            raise Exception("invalid filetype")
-        output = tf.convert_to_tensor([tf.encode_base64(output_data)])
-
-        key = tf.placeholder(tf.string, shape=[1])
-        inputs = {
-            "key": key.name,
-            "input": input.name
-        }
-        tf.add_to_collection("inputs", json.dumps(inputs))
-        outputs = {
-            "key":  tf.identity(key).name,
-            "output": output.name,
-        }
-        tf.add_to_collection("outputs", json.dumps(outputs))
-
-        init_op = tf.global_variables_initializer()
-        restore_saver = tf.train.Saver()
-        export_saver = tf.train.Saver()
-
-        with tf.Session() as sess:
-            sess.run(init_op)
-            print("loading model from checkpoint")
-            checkpoint = tf.train.latest_checkpoint(a.checkpoint)
-            restore_saver.restore(sess, checkpoint)
-            print("exporting model")
-            export_saver.export_meta_graph(filename=os.path.join(a.output_dir, "export.meta"))
-            export_saver.save(sess, os.path.join(a.output_dir, "export"), write_meta_graph=False)
-
-        return
 
     examples = load_examples()
     print("examples count = %d" % examples.count)
@@ -487,17 +433,21 @@ def main():
     targets = examples.targets
     outputs = model.outputs
 
-    def convert(image):
+    def convert(image, scale=None):
+        image = image[:, :, :, 32,:]
         if a.aspect_ratio != 1.0:
             # upscale to correct aspect ratio
             size = [CROP_SIZE, int(round(CROP_SIZE * a.aspect_ratio))]
-            image = tf.image.resize_images(image, size=size, method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+            image = tf.image.resize_images(image, size=size, method=tf.image.ResizeMethod.BICUBIC)
+
+        if scale:
+            image = tf.image.adjust_contrast(image, scale)
 
         return tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
 
     # reverse any processing on images so they can be written to disk or displayed to user
     with tf.name_scope("convert_inputs"):
-        converted_inputs = convert(inputs)
+        converted_inputs = convert(inputs, scale=10)
 
     with tf.name_scope("convert_targets"):
         converted_targets = convert(targets)
@@ -523,11 +473,11 @@ def main():
     with tf.name_scope("outputs_summary"):
         tf.summary.image("outputs", converted_outputs)
 
-    with tf.name_scope("predict_real_summary"):
-        tf.summary.image("predict_real", tf.image.convert_image_dtype(model.predict_real, dtype=tf.uint8))
+    #with tf.name_scope("predict_real_summary"):
+    #    tf.summary.image("predict_real", tf.image.convert_image_dtype(model.predict_real, dtype=tf.uint8))
 
-    with tf.name_scope("predict_fake_summary"):
-        tf.summary.image("predict_fake", tf.image.convert_image_dtype(model.predict_fake, dtype=tf.uint8))
+    #with tf.name_scope("predict_fake_summary"):
+    #    tf.summary.image("predict_fake", tf.image.convert_image_dtype(model.predict_fake, dtype=tf.uint8))
 
     tf.summary.scalar("discriminator_loss", model.discrim_loss)
     tf.summary.scalar("generator_loss_GAN", model.gen_loss_GAN)
