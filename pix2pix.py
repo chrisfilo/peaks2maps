@@ -51,7 +51,7 @@ EPS = 1e-12
 CROP_SIZE = 64
 
 Examples = collections.namedtuple("Examples", "paths, inputs, targets, count, steps_per_epoch")
-Model = collections.namedtuple("Model", "outputs, predict_real, predict_fake, discrim_loss, discrim_grads_and_vars, gen_loss_GAN, gen_loss_L1, gen_grads_and_vars, train")
+Model = collections.namedtuple("Model", "outputs, gen_loss_L1, gen_grads_and_vars, train")
 
 
 def conv(batch_input, out_channels, stride):
@@ -206,23 +206,23 @@ def create_generator(generator_inputs, generator_outputs_channels):
             layers.append(output)
 
     layer_specs = [
-        (a.ngf * 8, 0.5),   # decoder_7: [batch, 2, 2, ngf * 8 * 2] => [batch, 4, 4, ngf * 8 * 2]
         (a.ngf * 8, 0.5),   # decoder_6: [batch, 4, 4, ngf * 8 * 2] => [batch, 8, 8, ngf * 8 * 2]
-        (a.ngf * 8, 0.0),   # decoder_5: [batch, 8, 8, ngf * 8 * 2] => [batch, 16, 16, ngf * 8 * 2]
+        (a.ngf * 8, 0.5),   # decoder_5: [batch, 8, 8, ngf * 8 * 2] => [batch, 16, 16, ngf * 8 * 2]
         (a.ngf * 4, 0.0),   # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
         (a.ngf * 2, 0.0),   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
+        (a.ngf, 0.0),       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
     ]
 
     num_encoder_layers = len(layers)
     for decoder_layer, (out_channels, dropout) in enumerate(layer_specs):
         skip_layer = num_encoder_layers - decoder_layer - 1
         with tf.variable_scope("decoder_%d" % (skip_layer + 1)):
-            if True: #decoder_layer == 0:
+            if decoder_layer == 0:
                 # first decoder layer doesn't have skip connections
                 # since it is directly connected to the skip_layer
                 input = layers[-1]
             else:
-                input = tf.concat([layers[-1], layers[skip_layer]], axis=3)
+                input = tf.concat([layers[-1], layers[skip_layer]], axis=4)
 
             rectified = tf.nn.relu(input)
             # [batch, in_height, in_width, in_channels] => [batch, in_height*2, in_width*2, out_channels]
@@ -236,7 +236,7 @@ def create_generator(generator_inputs, generator_outputs_channels):
 
     # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
     with tf.variable_scope("decoder_1"):
-        input = layers[-1] #tf.concat([layers[-1], layers[0]], axis=3)
+        input = tf.concat([layers[-1], layers[0]], axis=4)
         rectified = tf.nn.relu(input)
         output = deconv(rectified, generator_outputs_channels)
         output = tf.tanh(output)
@@ -283,56 +283,51 @@ def create_model(inputs, targets):
         out_channels = int(targets.get_shape()[-1])
         outputs = create_generator(inputs, out_channels)
 
-    # create two copies of discriminator, one for real pairs and one for fake pairs
-    # they share the same underlying variables
-    with tf.name_scope("real_discriminator"):
-        with tf.variable_scope("discriminator"):
-            # 2x [batch, height, width, channels] => [batch, 30, 30, 1]
-            predict_real = create_discriminator(inputs, targets)
-
-    with tf.name_scope("fake_discriminator"):
-        with tf.variable_scope("discriminator", reuse=True):
-            # 2x [batch, height, width, channels] => [batch, 30, 30, 1]
-            predict_fake = create_discriminator(inputs, outputs)
-
-    with tf.name_scope("discriminator_loss"):
-        # minimizing -tf.log will try to get inputs to 1
-        # predict_real => 1
-        # predict_fake => 0
-        discrim_loss = tf.reduce_mean(-(tf.log(predict_real + EPS) + tf.log(1 - predict_fake + EPS)))
+    # # create two copies of discriminator, one for real pairs and one for fake pairs
+    # # they share the same underlying variables
+    # with tf.name_scope("real_discriminator"):
+    #     with tf.variable_scope("discriminator"):
+    #         # 2x [batch, height, width, channels] => [batch, 30, 30, 1]
+    #         predict_real = create_discriminator(inputs, targets)
+    #
+    # with tf.name_scope("fake_discriminator"):
+    #     with tf.variable_scope("discriminator", reuse=True):
+    #         # 2x [batch, height, width, channels] => [batch, 30, 30, 1]
+    #         predict_fake = create_discriminator(inputs, outputs)
+    #
+    # with tf.name_scope("discriminator_loss"):
+    #     # minimizing -tf.log will try to get inputs to 1
+    #     # predict_real => 1
+    #     # predict_fake => 0
+    #     discrim_loss = tf.reduce_mean(-(tf.log(predict_real + EPS) + tf.log(1 - predict_fake + EPS)))
 
     with tf.name_scope("generator_loss"):
         # predict_fake => 1
         # abs(targets - outputs) => 0
-        gen_loss_GAN = tf.reduce_mean(-tf.log(predict_fake + EPS))
+        # gen_loss_GAN = tf.reduce_mean(-tf.log(predict_fake + EPS))
         gen_loss_L1 = tf.reduce_mean(tf.abs(targets - outputs))
-        gen_loss = gen_loss_GAN * a.gan_weight + gen_loss_L1 * a.l1_weight
+        gen_loss = gen_loss_L1
+        # gen_loss = gen_loss_GAN * a.gan_weight + gen_loss_L1 * a.l1_weight
 
-    with tf.name_scope("discriminator_train"):
-        discrim_tvars = [var for var in tf.trainable_variables() if var.name.startswith("discriminator")]
-        discrim_optim = tf.train.AdamOptimizer(a.lr, a.beta1)
-        discrim_grads_and_vars = discrim_optim.compute_gradients(discrim_loss, var_list=discrim_tvars)
-        discrim_train = discrim_optim.apply_gradients(discrim_grads_and_vars)
+    # with tf.name_scope("discriminator_train"):
+    #     discrim_tvars = [var for var in tf.trainable_variables() if var.name.startswith("discriminator")]
+    #     discrim_optim = tf.train.AdamOptimizer(a.lr, a.beta1)
+    #     discrim_grads_and_vars = discrim_optim.compute_gradients(discrim_loss, var_list=discrim_tvars)
+    #     discrim_train = discrim_optim.apply_gradients(discrim_grads_and_vars)
 
     with tf.name_scope("generator_train"):
-        with tf.control_dependencies([discrim_train]):
-            gen_tvars = [var for var in tf.trainable_variables() if var.name.startswith("generator")]
-            gen_optim = tf.train.AdamOptimizer(a.lr, a.beta1)
-            gen_grads_and_vars = gen_optim.compute_gradients(gen_loss, var_list=gen_tvars)
-            gen_train = gen_optim.apply_gradients(gen_grads_and_vars)
+        gen_tvars = [var for var in tf.trainable_variables() if var.name.startswith("generator")]
+        gen_optim = tf.train.AdamOptimizer(a.lr, a.beta1)
+        gen_grads_and_vars = gen_optim.compute_gradients(gen_loss, var_list=gen_tvars)
+        gen_train = gen_optim.apply_gradients(gen_grads_and_vars)
 
     ema = tf.train.ExponentialMovingAverage(decay=0.99)
-    update_losses = ema.apply([discrim_loss, gen_loss_GAN, gen_loss_L1])
+    update_losses = ema.apply([gen_loss_L1])
 
     global_step = tf.contrib.framework.get_or_create_global_step()
     incr_global_step = tf.assign(global_step, global_step+1)
 
     return Model(
-        predict_real=predict_real,
-        predict_fake=predict_fake,
-        discrim_loss=ema.average(discrim_loss),
-        discrim_grads_and_vars=discrim_grads_and_vars,
-        gen_loss_GAN=ema.average(gen_loss_GAN),
         gen_loss_L1=ema.average(gen_loss_L1),
         gen_grads_and_vars=gen_grads_and_vars,
         outputs=outputs,
@@ -340,7 +335,11 @@ def create_model(inputs, targets):
     )
 
 
-def save_images(fetches, step=None):
+def save_images(fetches, step=None, save_nii=False):
+    from scipy.ndimage.interpolation import zoom
+    import nibabel as nb
+    from nilearn.plotting import plot_glass_brain
+    import numpy as np
     image_dir = os.path.join(a.output_dir, "images")
     if not os.path.exists(image_dir):
         os.makedirs(image_dir)
@@ -356,8 +355,37 @@ def save_images(fetches, step=None):
             fileset[kind] = filename
             out_path = os.path.join(image_dir, filename)
             contents = fetches[kind][i]
-            with open(out_path, "wb") as f:
-                f.write(contents)
+            # unpreprocess
+            contents = contents.squeeze()
+            if kind != "inputs":
+                contents = contents - 0.5
+                contents *= -1.0
+                args = {"colorbar": False,
+                        "plot_abs": False,
+                        "threshold": 0,
+                        "cmap": "RdBu",
+                        }
+            else:
+                args = {"colorbar": False,
+                        "plot_abs": True,
+                        "cmap": "autumn",
+                        "threshold": 0.5,
+                        "vmax": 1,
+                        "cmap": "bwr"}
+            affine = np.array([[  -2.,    0.,    0.,   90.],
+                               [   0.,    2.,    0., -126.],
+                               [   0.,    0.,    2.,  -72.],
+                               [   0.,    0.,    0.,    1.]])
+            zooms = (1.421875, 1.703125, 1.421875)
+            contents = zoom(contents, zooms, order=0)
+            nii = nb.Nifti1Image(contents, affine)
+            if save_nii:
+                nii.to_filename(out_path.replace(".png", ".nii.gz"))
+            p = plot_glass_brain(nii, black_bg=False,
+                                      display_mode='lyrz',
+                                      **args)
+            p.savefig(out_path)
+            p.close()
         filesets.append(fileset)
     return filesets
 
@@ -434,7 +462,7 @@ def main():
     outputs = model.outputs
 
     def convert(image, scale=None):
-        image = image[:, :, :, 32,:]
+        #image = image[:, :, :, 32,:]
         if a.aspect_ratio != 1.0:
             # upscale to correct aspect ratio
             size = [CROP_SIZE, int(round(CROP_SIZE * a.aspect_ratio))]
@@ -443,7 +471,7 @@ def main():
         if scale:
             image = tf.image.adjust_contrast(image, scale)
 
-        return tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
+        return image # tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
 
     # reverse any processing on images so they can be written to disk or displayed to user
     with tf.name_scope("convert_inputs"):
@@ -458,20 +486,20 @@ def main():
     with tf.name_scope("encode_images"):
         display_fetches = {
             "paths": examples.paths,
-            "inputs": tf.map_fn(tf.image.encode_png, converted_inputs, dtype=tf.string, name="input_pngs"),
-            "targets": tf.map_fn(tf.image.encode_png, converted_targets, dtype=tf.string, name="target_pngs"),
-            "outputs": tf.map_fn(tf.image.encode_png, converted_outputs, dtype=tf.string, name="output_pngs"),
+            "inputs": converted_inputs, # tf.map_fn(tf.image.encode_png, converted_inputs, dtype=tf.string, name="input_pngs"),
+            "targets": converted_targets, # tf.map_fn(tf.image.encode_png, converted_targets, dtype=tf.string, name="target_pngs"),
+            "outputs": converted_outputs, # tf.map_fn(tf.image.encode_png, converted_outputs, dtype=tf.string, name="output_pngs"),
         }
 
     # summaries
-    with tf.name_scope("inputs_summary"):
-        tf.summary.image("inputs", converted_inputs)
+    #with tf.name_scope("inputs_summary"):
+    #    tf.summary.image("inputs", converted_inputs)
 
-    with tf.name_scope("targets_summary"):
-        tf.summary.image("targets", converted_targets)
+    #with tf.name_scope("targets_summary"):
+    #    tf.summary.image("targets", converted_targets)
 
-    with tf.name_scope("outputs_summary"):
-        tf.summary.image("outputs", converted_outputs)
+    #with tf.name_scope("outputs_summary"):
+    #    tf.summary.image("outputs", converted_outputs)
 
     #with tf.name_scope("predict_real_summary"):
     #    tf.summary.image("predict_real", tf.image.convert_image_dtype(model.predict_real, dtype=tf.uint8))
@@ -479,15 +507,13 @@ def main():
     #with tf.name_scope("predict_fake_summary"):
     #    tf.summary.image("predict_fake", tf.image.convert_image_dtype(model.predict_fake, dtype=tf.uint8))
 
-    tf.summary.scalar("discriminator_loss", model.discrim_loss)
-    tf.summary.scalar("generator_loss_GAN", model.gen_loss_GAN)
-    tf.summary.scalar("generator_loss_L1", model.gen_loss_L1)
+#    tf.summary.scalar("discriminator_loss", model.discrim_loss)
 
-    for var in tf.trainable_variables():
-        tf.summary.histogram(var.op.name + "/values", var)
-
-    for grad, var in model.discrim_grads_and_vars + model.gen_grads_and_vars:
-        tf.summary.histogram(var.op.name + "/gradients", grad)
+    # for var in tf.trainable_variables():
+    #     tf.summary.histogram(var.op.name + "/values", var)
+    #
+    # for grad, var in model.discrim_grads_and_vars + model.gen_grads_and_vars:
+    #     tf.summary.histogram(var.op.name + "/gradients", grad)
 
     with tf.name_scope("parameter_count"):
         parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in tf.trainable_variables()])
@@ -516,7 +542,7 @@ def main():
             max_steps = min(examples.steps_per_epoch, max_steps)
             for step in range(max_steps):
                 results = sess.run(display_fetches)
-                filesets = save_images(results)
+                filesets = save_images(results,  save_nii=True)
                 for i, f in enumerate(filesets):
                     print("evaluated image", f["name"])
                 index_path = append_index(filesets)
@@ -542,8 +568,6 @@ def main():
                 }
 
                 if should(a.progress_freq):
-                    fetches["discrim_loss"] = model.discrim_loss
-                    fetches["gen_loss_GAN"] = model.gen_loss_GAN
                     fetches["gen_loss_L1"] = model.gen_loss_L1
 
                 if should(a.summary_freq):
@@ -574,8 +598,6 @@ def main():
                     rate = (step + 1) * a.batch_size / (time.time() - start)
                     remaining = (max_steps - step) * a.batch_size / rate
                     print("progress  epoch %d  step %d  image/sec %0.1f  remaining %dm" % (train_epoch, train_step, rate, remaining / 60))
-                    print("discrim_loss", results["discrim_loss"])
-                    print("gen_loss_GAN", results["gen_loss_GAN"])
                     print("gen_loss_L1", results["gen_loss_L1"])
 
                 if should(a.save_freq):
