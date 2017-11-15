@@ -14,8 +14,8 @@ def get_inference(input_images_placeholder, input_shape):
     with tf.name_scope('hidden1'):
         voxel_count = reduce(lambda x, y: x * y, input_shape)
         weights = tf.Variable(
-            tf.truncated_normal(input_shape,
-                                stddev=1.0 / math.sqrt(float(voxel_count))),
+            tf.truncated_normal(input_shape, mean=0.0,
+                                stddev=0.1),
             name='weights')
         hidden1 = tf.multiply(input_images_placeholder, weights)
     return hidden1
@@ -50,7 +50,7 @@ def get_training(loss, learning_rate):
     # Add a scalar summary for the snapshot loss.
     tf.summary.scalar('loss', loss)
     # Create the gradient descent optimizer with the given learning rate.
-    optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+    optimizer = tf.train.AdamOptimizer(learning_rate)
     # Create a variable to track the global step.
     global_step = tf.Variable(0, name='global_step', trainable=False)
     # Use the optimizer to apply the gradients that minimize the loss

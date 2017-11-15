@@ -2,7 +2,7 @@ import time
 import os
 import tensorflow as tf
 import trivial_model as model
-from datasets import get_data
+from datasets import get_data, gen_plot
 import numpy as np
 
 batch_size = 10
@@ -91,6 +91,9 @@ def run_training():
         correlation_histogram_summary = tf.summary.histogram('correlation_histogram',
                                                              correlations_)
 
+        summary_image_output = summary_glass_brain(inference_model, 'example_1_output')
+        summary_image_target = summary_glass_brain(target_images, 'example_1_target')
+
         # And then after everything is built:
 
         # Run the Op to initialize the variables.
@@ -126,11 +129,24 @@ def run_training():
                     train_summary_writer.flush()
 
                     sess.run(validation_iterator.initializer)
+                    if step == 0:
+                        sum_img_trg = sess.run(summary_image_target,
+                            feed_dict={
+                                handle: validation_handle})
+                        test_summary_writer.add_summary(sum_img_trg, step)
+                        sess.run(validation_iterator.initializer)
                     corrs = []
                     while True:
                         try:
-                            corr, _ = sess.run(eval, feed_dict={handle: validation_handle})
-                            corrs.append(corr)
+                            if len(corrs) == 0:
+                                corr, sum_img = sess.run(
+                                        [eval, summary_image_output],
+                                        feed_dict={
+                                            handle: validation_handle})
+                            else:
+                                corr = sess.run(eval, feed_dict={
+                                    handle: validation_handle})
+                            corrs.append(corr[0])
                         except tf.errors.OutOfRangeError:
                             break
                     corrs = np.array(corrs)
@@ -140,11 +156,24 @@ def run_training():
                     # sess.run(correlation_histogram_summary, feed_dict={correlations_: corrs,
                     #                                                    handle: validation_handle})
                     test_summary_writer.add_summary(sum, step)
+                    # Add image summary
+                    test_summary_writer.add_summary(sum_img, step)
                     test_summary_writer.flush()
 
             except tf.errors.OutOfRangeError:
                 break
             step += 1
+
+
+def summary_glass_brain(inference_model, label):
+    plot = tf.py_func(gen_plot, [inference_model], tf.string)
+    image = tf.image.decode_png(plot)
+    # Add the batch dimension
+    image = tf.expand_dims(image, 0)
+    summary_image = tf.summary.image(label,
+                                     image, max_outputs=200000)
+    return summary_image
+
 
 if __name__ == '__main__':
     run_training()

@@ -1,3 +1,5 @@
+import matplotlib as mpl
+mpl.use('agg')
 from glob import glob
 import tensorflow as tf
 import os
@@ -40,10 +42,12 @@ from nilearn import image
 def get_data(batch_size, nthreads=8):
     training_dataset, target_shape = _get_data(nthreads, batch_size,
                                                "D:/data/hcp_statmaps/train", 100,
-                                               'D:/drive/workspace/peaks2maps/cache_train')
+                                               'D:/drive/workspace/peaks2maps/cache_train',
+                                               True)
     validation_dataset, target_shape = _get_data(nthreads, 1,
-                                               "D:/data/hcp_statmaps/val", 1,
-                                                 'D:/drive/workspace/peaks2maps/cache_val')
+                                                 "D:/data/hcp_statmaps/val", 1,
+                                                 'D:/drive/workspace/peaks2maps/cache_val',
+                                                 False)
     handle = tf.placeholder(tf.string, shape=[])
     iterator = tf.data.Iterator.from_string_handle(
         handle, training_dataset.output_types, training_dataset.output_shapes)
@@ -57,7 +61,7 @@ def get_data(batch_size, nthreads=8):
     return input, target, target_shape, handle, training_iterator, validation_iterator
 
 
-def _get_data(nthreads, batch_size, src_folder, n_epochs, cache):
+def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle):
     filenames = tf.constant(glob(os.path.join(src_folder, "*.nii.gz")))
     dataset = tf.data.Dataset.from_tensor_slices((filenames,))
 
@@ -115,7 +119,32 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache):
     # sess = tf.Session()
     dataset = tf.data.Dataset.zip((dataset, dataset))
     dataset = dataset.cache(cache)
-    dataset = dataset.shuffle(buffer_size=100)
+    if shuffle:
+        dataset = dataset.shuffle(buffer_size=100)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(n_epochs)
     return dataset, target_shape
+
+
+from nilearn.plotting import plot_glass_brain
+import io
+def gen_plot(data):
+    args = {"colorbar": False,
+            "plot_abs": False,
+            "threshold": 0,
+            "cmap": "RdBu",
+            }
+    target_affine = np.array([[4., 0., 0., -75.],
+                              [0., 4., 0., -105.],
+                              [0., 0., 4., -70.],
+                              [0., 0., 0., 1.]])
+    nii = nb.Nifti1Image(np.squeeze(data), target_affine)
+    buf = io.BytesIO()
+    p = plot_glass_brain(nii, black_bg=False,
+                         display_mode='lyrz',
+                         **args)
+    p.savefig(buf)
+    p.close()
+    buf.seek(0)
+    val = buf.getvalue()
+    return val
