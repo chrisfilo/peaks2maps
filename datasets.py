@@ -65,10 +65,10 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
 class Peaks2MapsDataset:
 
     def __init__(self, target_resolution, train_batch_size,
-                 test_batch_size, n_epochs, nthreads=None):
+                 validation_batch_size, n_epochs, nthreads=None):
         self.target_resolution = target_resolution
         self.train_batch_size = train_batch_size
-        self.test_batch_size = test_batch_size
+        self.validation_batch_size = validation_batch_size
         self.n_epochs = n_epochs
         if nthreads is None:
             import multiprocessing
@@ -84,7 +84,7 @@ class Peaks2MapsDataset:
                                                                      True,
                                                                   self.target_resolution)
         self.validation_dataset, validation_shape = _get_data(self.nthreads,
-                                                              self.test_batch_size,
+                                                              self.validation_batch_size,
                                                               "D:/data/hcp_statmaps/val",
                                                               1,
                                                               'D:/drive/workspace/peaks2maps/cache_val',
@@ -109,6 +109,8 @@ class Peaks2MapsDataset:
         target_affine_tf = tf.constant(target_affine)
 
         def _gen_plot(data, target_affine):
+            if len(data.shape) == 4:
+                data = data[0, :, :, :]
             args = {"colorbar": False,
                     "plot_abs": False,
                     "threshold": 0,

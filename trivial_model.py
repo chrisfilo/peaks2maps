@@ -28,9 +28,8 @@ def get_loss(input_images_placeholder, target_images_placeholder):
     Returns:
       loss: Loss tensor of type float.
     """
-    loss = tf.reduce_mean(
-        tf.abs(target_images_placeholder - input_images_placeholder),
-        name='abs_diff_mean')
+    loss = tf.losses.mean_squared_error(target_images_placeholder,
+                                        input_images_placeholder)
     return loss
 
 
@@ -48,7 +47,6 @@ def get_training(loss, learning_rate):
       train_op: The Op for training.
     """
     # Add a scalar summary for the snapshot loss.
-    tf.summary.scalar('loss', loss)
     # Create the gradient descent optimizer with the given learning rate.
     optimizer = tf.train.AdamOptimizer(learning_rate)
     # Create a variable to track the global step.

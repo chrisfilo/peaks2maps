@@ -4,10 +4,11 @@ import tensorflow as tf
 import trivial_model as model
 from datasets import Peaks2MapsDataset
 import numpy as np
+import datetime
 
 batch_size = 10
 learning_rate = 0.01
-log_dir = 'test_log'
+log_dir = 'logs'
 max_steps = 2000
 
 
@@ -20,7 +21,7 @@ def run_training():
         ds = Peaks2MapsDataset(target_resolution=4.0,
                                n_epochs=100,
                                train_batch_size=20,
-                               test_batch_size=1)
+                               validation_batch_size=1)
         # Generate placeholders for the images and labels.
         #input_images, target_images, input_shape, handle, training_iterator, validation_iterator = get_data(batch_size)
 
@@ -52,19 +53,23 @@ def run_training():
         sess = tf.Session()
 
         # Instantiate a SummaryWriter to output summaries and the Graph.
-        train_summary_writer = tf.summary.FileWriter(os.path.join(log_dir, "train"),
+        current_run_subdir = os.path.join("run_" + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        train_summary_writer = tf.summary.FileWriter(os.path.join(log_dir,
+                                                                  current_run_subdir,
+                                                                  "train"),
                                                                   sess.graph)
-        test_summary_writer = tf.summary.FileWriter(os.path.join(log_dir, "test"),
-                                                    sess.graph)
+        test_summary_writer = tf.summary.FileWriter(os.path.join(log_dir,
+                                                                 current_run_subdir,
+                                                                 "test"))
 
-        mean_correlation_ = tf.placeholder(tf.float32, shape=())
-        mean_correlation_summary = tf.summary.scalar('mean_correlation', mean_correlation_)
-        correlations_ = tf.placeholder(tf.float32, shape=(781))
-        correlation_histogram_summary = tf.summary.histogram('correlation_histogram',
-                                                             correlations_)
-
-        summary_image_output = ds.get_plot_op(inference_model, 'example_1_output')
-        summary_image_target = ds.get_plot_op(ds.target_image, 'example_1_target')
+        mean_loss_placeholder = tf.placeholder(tf.float32, shape=())
+        mean_loss_summary = tf.summary.scalar('loss', mean_loss_placeholder)
+        losses_placeholder = tf.placeholder(tf.float32, shape=(781))
+        losses_histogram_summary = tf.summary.histogram('loss_histogram',
+                                                        losses_placeholder)
+        images_count = 5
+        summary_images_output = [ds.get_plot_op(inference_model, 'example_%02d_output'%i) for i in range(images_count)]
+        summary_images_target = [ds.get_plot_op(ds.target_image, 'example_%02d_target'%i) for i in range(images_count)]
 
         # And then after everything is built:
 
@@ -96,40 +101,50 @@ def run_training():
                 if step % 100 == 0:
                     print('Step %d: loss = %.2f (%.3f sec)' % (
                         step, loss_value, duration))
-                    summary_str = sess.run(summary, feed_dict={ds.handle: training_handle})
-                    train_summary_writer.add_summary(summary_str, step)
+                    #summary_str = sess.run(summary, feed_dict={ds.handle: training_handle})
+                    sum_mean_loss = sess.run(mean_loss_summary, feed_dict={
+                        mean_loss_placeholder: loss_value,
+                        ds.handle: validation_handle})
+                    train_summary_writer.add_summary(sum_mean_loss, step)
+                    #train_summary_writer.add_summary(summary_str, step)
                     train_summary_writer.flush()
 
                     sess.run(ds.validation_iterator.initializer)
                     if step == 0:
-                        sum_img_trg = sess.run(summary_image_target,
-                            feed_dict={
-                                ds.handle: validation_handle})
-                        test_summary_writer.add_summary(sum_img_trg, step)
+                        for i in range(images_count):
+                            sum_img_trg = sess.run(summary_images_target[i],
+                                feed_dict={
+                                    ds.handle: validation_handle})
+                            test_summary_writer.add_summary(sum_img_trg, step)
                         sess.run(ds.validation_iterator.initializer)
-                    corrs = []
+
+                    losses = []
                     while True:
                         try:
-                            if len(corrs) == 0:
-                                corr, sum_img = sess.run(
-                                        [eval, summary_image_output],
+                            if len(losses) in range(images_count):
+                                cur_loss, sum_img = sess.run(
+                                        [loss, summary_images_output[len(losses)]],
                                         feed_dict={
                                             ds.handle: validation_handle})
+                                test_summary_writer.add_summary(sum_img, step)
                             else:
-                                corr = sess.run(eval, feed_dict={
+                                cur_loss = sess.run(loss, feed_dict={
                                     ds.handle: validation_handle})
-                            corrs.append(corr[0])
+
+                            losses.append(cur_loss)
                         except tf.errors.OutOfRangeError:
                             break
-                    corrs = np.array(corrs)
 
-                    sum = sess.run(mean_correlation_summary, feed_dict={mean_correlation_: np.nanmean(corrs),
-                                                                  ds.handle: validation_handle})
-                    # sess.run(correlation_histogram_summary, feed_dict={correlations_: corrs,
-                    #                                                    handle: validation_handle})
-                    test_summary_writer.add_summary(sum, step)
-                    test_summary_writer.add_summary(sum_img, step)
+                    losses = np.array(losses)
+
+                    sum_mean_loss = sess.run(mean_loss_summary, feed_dict={mean_loss_placeholder: np.mean(losses),
+                                                                           ds.handle: validation_handle})
+                    sum_loss_dist = sess.run(losses_histogram_summary, feed_dict={losses_placeholder: losses,
+                                                                                  ds.handle: validation_handle})
+                    test_summary_writer.add_summary(sum_mean_loss, step)
+                    test_summary_writer.add_summary(sum_loss_dist, step)
                     test_summary_writer.flush()
+
 
             except tf.errors.OutOfRangeError:
                 break
