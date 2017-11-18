@@ -20,7 +20,7 @@ def run_training():
 
         ds = Peaks2MapsDataset(target_resolution=4.0,
                                n_epochs=100,
-                               train_batch_size=20,
+                               train_batch_size=200,
                                validation_batch_size=1)
         # Generate placeholders for the images and labels.
         #input_images, target_images, input_shape, handle, training_iterator, validation_iterator = get_data(batch_size)
@@ -68,6 +68,7 @@ def run_training():
         losses_histogram_summary = tf.summary.histogram('loss_histogram',
                                                         losses_placeholder)
         images_count = 5
+        summary_images_input = [ds.get_plot_op(ds.input_image, 'example_%02d_input'%i) for i in range(images_count)]
         summary_images_output = [ds.get_plot_op(inference_model, 'example_%02d_output'%i) for i in range(images_count)]
         summary_images_target = [ds.get_plot_op(ds.target_image, 'example_%02d_target'%i) for i in range(images_count)]
 
@@ -82,8 +83,12 @@ def run_training():
         validation_handle = sess.run(ds.validation_iterator.string_handle())
 
         # Start the training loop.
+
+        print("Begin training model with %d parameters" % np.sum(
+            [np.prod(v.shape) for v in tf.trainable_variables()]))
         step = 0
         while True:
+
             try:
                 start_time = time.time()
 
@@ -112,10 +117,11 @@ def run_training():
                     sess.run(ds.validation_iterator.initializer)
                     if step == 0:
                         for i in range(images_count):
-                            sum_img_trg = sess.run(summary_images_target[i],
+                            sum_img_input, sum_img_target = sess.run([summary_images_input[i], summary_images_target[i]],
                                 feed_dict={
                                     ds.handle: validation_handle})
-                            test_summary_writer.add_summary(sum_img_trg, step)
+                            test_summary_writer.add_summary(sum_img_target, step)
+                            test_summary_writer.add_summary(sum_img_input, step)
                         sess.run(ds.validation_iterator.initializer)
 
                     losses = []
