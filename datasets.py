@@ -8,6 +8,7 @@ import numpy as np
 from scipy.ndimage.interpolation import zoom
 from nilearn import image
 from nilearn.plotting import plot_glass_brain
+from skimage.feature import peak_local_max
 import io
 
 
@@ -21,6 +22,7 @@ def _get_resize_arg(target_resolution_mm):
                               [0., 0., 0., 1.]])
     target_affine[0, 0] = target_affine[1, 1] = target_affine[
         2, 2] = target_resolution_mm
+    target_shape = (64,64,64)
     return target_affine, list(target_shape)
 
 
@@ -36,6 +38,8 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
             filename.decode('utf-8'),
             target_affine=target_affine, target_shape=target_shape)
         data = nii.get_data()
+        m = np.max(np.abs(data))
+        data = data/m
         data = data.astype(np.float32)
         return data
 
@@ -54,7 +58,21 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
 
     dataset = dataset.map(_resize)
 
-    dataset = tf.data.Dataset.zip((dataset, dataset))
+    def _extract_peaks(data):
+        peaks = peak_local_max(data, indices=False, min_distance=5,
+                               threshold_rel=0.85).astype(np.float32)
+        peaks[peaks > 0] == 0.5
+        return peaks
+
+    peaks_dataset = dataset.map(
+        lambda data: tuple(tf.py_func(_extract_peaks,
+                                          [data],
+                                          [tf.float32])),
+        num_parallel_calls=nthreads)
+
+    peaks_dataset = peaks_dataset.map(_resize)
+
+    dataset = tf.data.Dataset.zip((peaks_dataset, dataset))
     dataset = dataset.cache(cache)
     if shuffle:
         dataset = dataset.shuffle(buffer_size=100)
@@ -79,7 +97,7 @@ class Peaks2MapsDataset:
         self.training_dataset, self.target_shape = _get_data(self.nthreads,
                                                                   self.train_batch_size,
                                                                      "D:/data/hcp_statmaps/train",
-                                                                     100,
+                                                                     n_epochs,
                                                                      'D:/drive/workspace/peaks2maps/cache_train',
                                                                      True,
                                                                   self.target_resolution)
@@ -111,15 +129,17 @@ class Peaks2MapsDataset:
         def _gen_plot(data, target_affine):
             if len(data.shape) == 4:
                 data = data[0, :, :, :]
-            args = {"colorbar": False,
+            args = {"colorbar": True,
                     "plot_abs": False,
                     "threshold": 0,
-                    "cmap": "RdBu",
+                    "cmap": "RdBu_r",
                     }
             nii = nb.Nifti1Image(np.squeeze(data), target_affine)
             buf = io.BytesIO()
             p = plot_glass_brain(nii, black_bg=False,
                                  display_mode='lyrz',
+                                 vmin=-1,
+                                 vmax=1,
                                  **args)
             p.savefig(buf)
             p.close()

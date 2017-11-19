@@ -1,12 +1,12 @@
 import time
 import os
 import tensorflow as tf
-import trivial_model as model
+#import trivial_model as model
+import vanilla_vae_model as model
 from datasets import Peaks2MapsDataset
 import numpy as np
 import datetime
 
-batch_size = 10
 learning_rate = 0.01
 log_dir = 'logs'
 max_steps = 2000
@@ -18,9 +18,9 @@ def run_training():
     # Tell TensorFlow that the model will be built into the default Graph.
     with tf.Graph().as_default():
 
-        ds = Peaks2MapsDataset(target_resolution=4.0,
-                               n_epochs=100,
-                               train_batch_size=200,
+        ds = Peaks2MapsDataset(target_resolution=3.0,
+                               n_epochs=1000,
+                               train_batch_size=20,
                                validation_batch_size=1)
         # Generate placeholders for the images and labels.
         #input_images, target_images, input_shape, handle, training_iterator, validation_iterator = get_data(batch_size)
@@ -35,9 +35,6 @@ def run_training():
         # Add to the Graph the Ops that calculate and apply gradients.
         train_op = model.get_training(loss, learning_rate)
 
-        eval = tf.contrib.metrics.streaming_pearson_correlation(
-            inference_model,
-            ds.target_image)
 
         # Build the summary Tensor based on the TF collection of Summaries.
         summary = tf.summary.merge_all()
@@ -87,6 +84,16 @@ def run_training():
         print("Begin training model with %d parameters" % np.sum(
             [np.prod(v.shape) for v in tf.trainable_variables()]))
         step = 0
+
+        sess.run(ds.validation_iterator.initializer)
+        while True:
+            try:
+                sess.run(ds.input_image, feed_dict={
+                    ds.handle: validation_handle})
+            except tf.errors.OutOfRangeError:
+                break
+        sess.run(ds.validation_iterator.initializer)
+
         while True:
 
             try:
