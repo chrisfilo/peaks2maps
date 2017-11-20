@@ -22,7 +22,7 @@ def _get_resize_arg(target_resolution_mm):
                               [0., 0., 0., 1.]])
     target_affine[0, 0] = target_affine[1, 1] = target_affine[
         2, 2] = target_resolution_mm
-    target_shape = (64,64,64)
+    target_shape = (32,32,32)
     return target_affine, list(target_shape)
 
 
@@ -37,6 +37,7 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
         nii = image.resample_img(
             filename.decode('utf-8'),
             target_affine=target_affine, target_shape=target_shape)
+        nii = image.smooth_img(nii, 12)
         data = nii.get_data()
         m = np.max(np.abs(data))
         data = data/m
@@ -59,9 +60,9 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
     dataset = dataset.map(_resize)
 
     def _extract_peaks(data):
-        peaks = peak_local_max(data, indices=False, min_distance=5,
-                               threshold_rel=0.85).astype(np.float32)
-        peaks[peaks > 0] == 0.5
+        peaks = peak_local_max(data, indices=False, min_distance=2,
+                               threshold_abs=0.85).astype(np.float32)
+        peaks[peaks > 0] == 1.0
         return peaks
 
     peaks_dataset = dataset.map(
