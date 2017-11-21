@@ -61,23 +61,26 @@ def get_inference(input_images_placeholder, input_shape, training_flag):
         layers.append(output)
 
     layer_specs = [
-        ngf * 2,
+        (ngf * 2, 0.5),
         # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
-        ngf * 2,
+        (ngf * 2, 0.5),
         # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
-        ngf * 4,
+        (ngf * 4, 0.5),
         #encoder_4: [batch, 32, 32, ngf * 4] => [batch, 16, 16, ngf * 8]
-        ngf * 8,
+        (ngf * 8, 0.5),
         # encoder_5: [batch, 16, 16, ngf * 8] => [batch, 8, 8, ngf * 8]
         # ngf * 8,
         # # encoder_6: [batch, 8, 8, ngf * 8] => [batch, 4, 4, ngf * 8]
     ]
 
-    for out_channels in layer_specs:
+    for out_channels, dropout in layer_specs:
         with tf.variable_scope("encoder_%d" % (len(layers) + 1)):
             # [batch, in_height, in_width, in_channels] => [batch, in_height/2, in_width/2, out_channels]
             convolved = pad_and_conv(layers[-1], out_channels, conv_args)
             output = tf.layers.batch_normalization(convolved, **batchnorm_args)
+            if dropout > 0.0:
+                output = tf.layers.dropout(output, rate=dropout,
+                                           training=training_flag)
             layers.append(output)
 
     layer_specs = [
@@ -87,9 +90,9 @@ def get_inference(input_images_placeholder, input_shape, training_flag):
         # decoder_5: [batch, 8, 8, ngf * 8 * 2] => [batch, 16, 16, ngf * 8 * 2]
         (ngf * 4, 0.5),
         # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
-        (ngf * 2, 0.0),
+        (ngf * 2, 0.5),
         # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
-        (ngf * 2, 0.0),
+        (ngf * 2, 0.5),
         # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
     ]
 

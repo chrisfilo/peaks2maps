@@ -18,7 +18,7 @@ def run_training():
     # Tell TensorFlow that the model will be built into the default Graph.
     with tf.Graph().as_default():
 
-        ds = Peaks2MapsDataset(target_resolution=6.0,
+        ds = Peaks2MapsDataset(target_shape=(32, 32, 32),
                                n_epochs=1000,
                                train_batch_size=20,
                                validation_batch_size=1)
