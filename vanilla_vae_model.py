@@ -17,7 +17,7 @@ def batchnorm(input):
         normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale, variance_epsilon=variance_epsilon)
         return normalized
 
-def get_inference(input_images_placeholder, input_shape):
+def get_inference(input_images_placeholder, input_shape, training_flag):
     """Build the MNIST model up to where it may be used for inference.
     Args:
 
@@ -41,12 +41,23 @@ def get_inference(input_images_placeholder, input_shape):
     deconv_args["padding"] = "same"
     deconv_args["name"] = "deconv"
 
-    # encoder_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ngf]
-    with tf.variable_scope("encoder_1"):
-        padded_input = tf.pad(input_images_placeholder,
+    batchnorm_args = {"scale": True,
+                      "gamma_initializer": tf.random_normal_initializer(1.0, 0.02),
+                      "center": True,
+                      "beta_initializer": tf.zeros_initializer(),
+                      "name": "batchnorm"}
+
+    def pad_and_conv(input, out_channels, conv_args):
+        padded_input = tf.pad(input,
                               [[0, 0], [1, 1], [1, 1], [1, 1], [0, 0]],
                               mode="CONSTANT")
-        output = tf.layers.conv3d(padded_input, ngf, **conv_args)
+        convolved = tf.layers.conv3d(padded_input, out_channels,
+                                     **conv_args)
+        return convolved
+
+    # encoder_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ngf]
+    with tf.variable_scope("encoder_1"):
+        output = pad_and_conv(input_images_placeholder, ngf, conv_args)
         layers.append(output)
 
     layer_specs = [
@@ -65,12 +76,8 @@ def get_inference(input_images_placeholder, input_shape):
     for out_channels in layer_specs:
         with tf.variable_scope("encoder_%d" % (len(layers) + 1)):
             # [batch, in_height, in_width, in_channels] => [batch, in_height/2, in_width/2, out_channels]
-            padded_input = tf.pad(layers[-1],
-                                  [[0, 0], [1, 1], [1, 1], [1, 1], [0, 0]],
-                                  mode="CONSTANT")
-            convolved = tf.layers.conv3d(padded_input, out_channels,
-                                         **conv_args)
-            output = batchnorm(convolved)
+            convolved = pad_and_conv(layers[-1], out_channels, conv_args)
+            output = tf.layers.batch_normalization(convolved, **batchnorm_args)
             layers.append(output)
 
     layer_specs = [
@@ -99,10 +106,11 @@ def get_inference(input_images_placeholder, input_shape):
 
             output = tf.layers.conv3d_transpose(input, out_channels,
                                                 **deconv_args)
-            output = batchnorm(output)
+            output = tf.layers.batch_normalization(output, **batchnorm_args)
 
             if dropout > 0.0:
-                output = tf.nn.dropout(output, keep_prob=1 - dropout)
+                output = tf.layers.dropout(output, rate=dropout,
+                                           training=training_flag)
 
             layers.append(output)
 

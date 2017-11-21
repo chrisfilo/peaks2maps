@@ -25,9 +25,13 @@ def run_training():
         # Generate placeholders for the images and labels.
         #input_images, target_images, input_shape, handle, training_iterator, validation_iterator = get_data(batch_size)
 
+
+        training_flag = tf.placeholder(tf.bool, name="training_flag")
+
         # Build a Graph that computes predictions from the inference model.
         inference_model = model.get_inference(ds.input_image,
-                                              ds.target_shape)
+                                              ds.target_shape,
+                                              training_flag)
 
         # Add to the Graph the Ops for loss calculation.
         loss = model.get_loss(inference_model, ds.target_image)
@@ -105,7 +109,8 @@ def run_training():
                 # in the list passed to sess.run() and the value tensors will be
                 # returned in the tuple from the call.
                 _, loss_value = sess.run([train_op, loss],
-                                         feed_dict={ds.handle: training_handle})
+                                         feed_dict={ds.handle: training_handle,
+                                                    training_flag: True})
 
                 duration = time.time() - start_time
 
@@ -138,11 +143,13 @@ def run_training():
                                 cur_loss, sum_img = sess.run(
                                         [loss, summary_images_output[len(losses)]],
                                         feed_dict={
-                                            ds.handle: validation_handle})
+                                            ds.handle: validation_handle,
+                                            training_flag: False})
                                 test_summary_writer.add_summary(sum_img, step)
                             else:
                                 cur_loss = sess.run(loss, feed_dict={
-                                    ds.handle: validation_handle})
+                                    ds.handle: validation_handle,
+                                    training_flag: False})
 
                             losses.append(cur_loss)
                         except tf.errors.OutOfRangeError:
