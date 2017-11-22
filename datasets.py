@@ -37,7 +37,7 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
         nii = image.resample_img(
             filename.decode('utf-8'),
             target_affine=target_affine, target_shape=target_shape)
-        nii = image.smooth_img(nii, 12)
+        nii = image.smooth_img(nii, 8)
         data = nii.get_data()
         m = np.max(np.abs(data))
         data = data/m
@@ -61,7 +61,7 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
 
     def _extract_peaks(data):
         peaks = peak_local_max(data, indices=False, min_distance=2,
-                               threshold_abs=0.85).astype(np.float32)
+                               threshold_abs=0.50).astype(np.float32)
         peaks[peaks > 0] == 1.0
         return peaks
 

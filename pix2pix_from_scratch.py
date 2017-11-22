@@ -2,7 +2,7 @@ import time
 import os
 import tensorflow as tf
 #import trivial_model as model
-import vanilla_vae_model as model
+import models.unet as model
 from datasets import Peaks2MapsDataset
 import numpy as np
 import datetime
@@ -19,7 +19,7 @@ def run_training():
     with tf.Graph().as_default():
 
         ds = Peaks2MapsDataset(target_shape=(32, 32, 32),
-                               n_epochs=1000,
+                               n_epochs=10000,
                                train_batch_size=20,
                                validation_batch_size=1)
         # Generate placeholders for the images and labels.
