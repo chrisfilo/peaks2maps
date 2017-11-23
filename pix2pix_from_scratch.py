@@ -2,7 +2,8 @@ import time
 import os
 import tensorflow as tf
 #import trivial_model as model
-import models.unet as model
+#import models.unet as model
+import models.recnn as model
 from datasets import Peaks2MapsDataset
 import numpy as np
 import datetime
@@ -18,9 +19,9 @@ def run_training():
     # Tell TensorFlow that the model will be built into the default Graph.
     with tf.Graph().as_default():
 
-        ds = Peaks2MapsDataset(target_shape=(32, 32, 32),
+        ds = Peaks2MapsDataset(target_shape=(64, 64, 64),
                                n_epochs=10000,
-                               train_batch_size=20,
+                               train_batch_size=3,
                                validation_batch_size=1)
         # Generate placeholders for the images and labels.
         #input_images, target_images, input_shape, handle, training_iterator, validation_iterator = get_data(batch_size)
