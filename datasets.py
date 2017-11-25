@@ -27,7 +27,7 @@ def _get_resize_arg(target_shape):
 
 
 def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
-              target_shape):
+              target_shape, add_nagatives=False):
     filenames = tf.constant(glob(os.path.join(src_folder, "*.nii.gz")))
     dataset = tf.data.Dataset.from_tensor_slices((filenames,))
 
@@ -37,7 +37,7 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
         nii = image.resample_img(
             filename.decode('utf-8'),
             target_affine=target_affine, target_shape=target_shape)
-        nii = image.smooth_img(nii, 10)
+        nii = image.smooth_img(nii, 9)
         data = nii.get_data()
         m = np.max(np.abs(data))
         data = data/m
@@ -57,11 +57,17 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
     def _resize(data):
         return tf.reshape(data, target_shape)
 
-    dataset = dataset.map(_resize)
+    dataset = dataset.map(_resize, num_parallel_calls=nthreads)
+
+    if add_nagatives:
+        print()
+        negatives = dataset.map(lambda data: tf.scalar_mul(-1, data),
+                                num_parallel_calls=nthreads)
+        dataset = dataset.concatenate(negatives)
 
     def _extract_peaks(data):
-        peaks = peak_local_max(data, indices=False, min_distance=2,
-                               threshold_abs=0.80).astype(np.float32)
+        peaks = peak_local_max(data, indices=False, min_distance=3,
+                               threshold_abs=0.70).astype(np.float32)
         peaks[peaks > 0] == 1.0
         return peaks
 
@@ -74,9 +80,15 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
     peaks_dataset = peaks_dataset.map(_resize)
 
     dataset = tf.data.Dataset.zip((peaks_dataset, dataset))
+
+    def _filter_empty(peaks, maps):
+        return tf.reduce_sum(peaks) > 0
+
+    dataset = dataset.filter(_filter_empty)
+
     dataset = dataset.cache(cache)
     if shuffle:
-        dataset = dataset.shuffle(buffer_size=100)
+        dataset = dataset.shuffle(buffer_size=10)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(n_epochs)
     return dataset, target_shape
@@ -96,19 +108,21 @@ class Peaks2MapsDataset:
             self.nthreads = nthreads
 
         self.training_dataset, self.target_shape = _get_data(self.nthreads,
-                                                                  self.train_batch_size,
-                                                                     "D:/data/hcp_statmaps/train",
-                                                                     n_epochs,
-                                                                     'D:/drive/workspace/peaks2maps/cache_train',
-                                                                     True,
-                                                                  self.target_shape)
+                                                             self.train_batch_size,
+                                                             "D:/data/hcp_statmaps/train",
+                                                             n_epochs,
+                                                             'D:/drive/workspace/peaks2maps/cache_train',
+                                                             True,
+                                                             self.target_shape,
+                                                             True)
         self.validation_dataset, validation_shape = _get_data(self.nthreads,
                                                               self.validation_batch_size,
                                                               "D:/data/hcp_statmaps/val",
                                                               1,
                                                               'D:/drive/workspace/peaks2maps/cache_val',
                                                               False,
-                                                              self.target_shape)
+                                                              self.target_shape,
+                                                              False)
         assert(self.target_shape == validation_shape)
 
         self.handle = tf.placeholder(tf.string, shape=[])

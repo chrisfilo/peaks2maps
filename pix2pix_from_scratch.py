@@ -2,8 +2,9 @@ import time
 import os
 import tensorflow as tf
 #import trivial_model as model
-#import models.unet as model
-import models.recnn as model
+import models.unet as model
+#import models.recnn as model
+#import models.meshnet as model
 from datasets import Peaks2MapsDataset
 import numpy as np
 import datetime
@@ -19,9 +20,9 @@ def run_training():
     # Tell TensorFlow that the model will be built into the default Graph.
     with tf.Graph().as_default():
 
-        ds = Peaks2MapsDataset(target_shape=(64, 64, 64),
-                               n_epochs=10000,
-                               train_batch_size=3,
+        ds = Peaks2MapsDataset(target_shape=(32, 32, 32),
+                               n_epochs=100,
+                               train_batch_size=30,
                                validation_batch_size=1)
         # Generate placeholders for the images and labels.
         #input_images, target_images, input_shape, handle, training_iterator, validation_iterator = get_data(batch_size)
@@ -54,25 +55,6 @@ def run_training():
         # Create a session for running Ops on the Graph.
         sess = tf.Session()
 
-        # Instantiate a SummaryWriter to output summaries and the Graph.
-        current_run_subdir = os.path.join("run_" + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-        train_summary_writer = tf.summary.FileWriter(os.path.join(log_dir,
-                                                                  current_run_subdir,
-                                                                  "train"),
-                                                                  sess.graph)
-        test_summary_writer = tf.summary.FileWriter(os.path.join(log_dir,
-                                                                 current_run_subdir,
-                                                                 "test"))
-
-        mean_loss_placeholder = tf.placeholder(tf.float32, shape=())
-        mean_loss_summary = tf.summary.scalar('loss', mean_loss_placeholder)
-        losses_placeholder = tf.placeholder(tf.float32, shape=(781))
-        losses_histogram_summary = tf.summary.histogram('loss_histogram',
-                                                        losses_placeholder)
-        images_count = 5
-        summary_images_input = [ds.get_plot_op(ds.input_image, 'example_%02d_input'%i) for i in range(images_count)]
-        summary_images_output = [ds.get_plot_op(inference_model, 'example_%02d_output'%i) for i in range(images_count)]
-        summary_images_target = [ds.get_plot_op(ds.target_image, 'example_%02d_target'%i) for i in range(images_count)]
 
         # And then after everything is built:
 
@@ -88,20 +70,41 @@ def run_training():
 
         print("Begin training model with %d parameters" % np.sum(
             [np.prod(v.shape) for v in tf.trainable_variables()]))
-        step = 0
 
+        validation_ds_size = 0
         sess.run(ds.validation_iterator.initializer)
         while True:
             try:
                 sess.run(ds.input_image, feed_dict={
                     ds.handle: validation_handle})
+                validation_ds_size += 1
             except tf.errors.OutOfRangeError:
                 break
-        sess.run(ds.validation_iterator.initializer)
 
+        # Instantiate a SummaryWriter to output summaries and the Graph.
+        current_run_subdir = os.path.join("run_" + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        train_summary_writer = tf.summary.FileWriter(os.path.join(log_dir, model.name,
+                                                                  current_run_subdir,
+                                                                  "training"),
+                                                                  sess.graph)
+        test_summary_writer = tf.summary.FileWriter(os.path.join(log_dir, model.name,
+                                                                 current_run_subdir,
+                                                                 "validation"))
+
+        mean_loss_placeholder = tf.placeholder(tf.float32, shape=())
+        mean_loss_summary = tf.summary.scalar('loss', mean_loss_placeholder)
+        losses_placeholder = tf.placeholder(tf.float32, shape=(validation_ds_size))
+        losses_histogram_summary = tf.summary.histogram('loss_histogram',
+                                                        losses_placeholder)
+        images_count = 5
+        summary_images_input = [ds.get_plot_op(ds.input_image, 'example_%02d_input'%i) for i in range(images_count)]
+        summary_images_output = [ds.get_plot_op(inference_model, 'example_%02d_output'%i) for i in range(images_count)]
+        summary_images_target = [ds.get_plot_op(ds.target_image, 'example_%02d_target'%i) for i in range(images_count)]
+
+        step = 0
         while True:
-
             try:
+                print(step)
                 start_time = time.time()
 
                 # Run one step of the model.  The return values are the activations
@@ -109,14 +112,16 @@ def run_training():
                 # inspect the values of your Ops or variables, you may include them
                 # in the list passed to sess.run() and the value tensors will be
                 # returned in the tuple from the call.
-                _, loss_value = sess.run([train_op, loss],
-                                         feed_dict={ds.handle: training_handle,
-                                                    training_flag: True})
+                extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+                _, loss_value, _ = sess.run([train_op, loss, extra_update_ops],
+                                            feed_dict={ds.handle: training_handle,
+                                                       training_flag: True})
 
                 duration = time.time() - start_time
 
                 # Write the summaries and print an overview fairly often.
                 if step % 100 == 0:
+
                     print('Step %d: loss = %.2f (%.3f sec)' % (
                         step, loss_value, duration))
                     #summary_str = sess.run(summary, feed_dict={ds.handle: training_handle})
@@ -165,8 +170,6 @@ def run_training():
                     test_summary_writer.add_summary(sum_mean_loss, step)
                     test_summary_writer.add_summary(sum_loss_dist, step)
                     test_summary_writer.flush()
-
-
             except tf.errors.OutOfRangeError:
                 break
             step += 1
