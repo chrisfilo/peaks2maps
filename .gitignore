@@ -1,7 +1,7 @@
 *.pyc
 tags
 test
-models
+*logs*
 terraform.tfstate
 terraform.tfstate.backup
 terraform.tfvars

@@ -28,8 +28,8 @@ def _get_resize_arg(target_shape):
 
 def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
               target_shape, add_nagatives=False):
-    filenames = tf.constant(glob(os.path.join(src_folder, "*.nii.gz")))
-    dataset = tf.data.Dataset.from_tensor_slices((filenames,))
+    paths = tf.constant(glob(os.path.join(src_folder, "*.nii.gz")))
+    paths_ds = tf.data.Dataset.from_tensor_slices((paths,))
 
     target_affine, target_shape = _get_resize_arg(target_shape)
 
@@ -46,12 +46,22 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
 
     target_affine_tf = tf.constant(target_affine)
     target_shape_tf = tf.constant(target_shape)
-    dataset = dataset.map(
+    dataset = paths_ds.map(
         lambda filename: tuple(tf.py_func(_read_py_function,
                                           [filename,
                                            target_affine_tf,
                                            target_shape_tf],
                                           [tf.float32])),
+        num_parallel_calls=nthreads)
+
+    def _split_py_function(path):
+        import os
+        return path.decode('utf-8').split(os.sep)[-1]
+
+    filenames_ds = paths_ds.map(
+        lambda path: tuple(tf.py_func(_split_py_function,
+                                      [path],
+                                      [tf.string])),
         num_parallel_calls=nthreads)
 
     def _resize(data):
@@ -64,6 +74,8 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
         negatives = dataset.map(lambda data: tf.scalar_mul(-1, data),
                                 num_parallel_calls=nthreads)
         dataset = dataset.concatenate(negatives)
+
+    #dataset = dataset.cache()
 
     def _extract_peaks(data):
         peaks = peak_local_max(data, indices=False, min_distance=3,
@@ -78,17 +90,23 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
         num_parallel_calls=nthreads)
 
     peaks_dataset = peaks_dataset.map(_resize)
+    #peaks_dataset = peaks_dataset.cache(cache + "_peaks")
 
-    dataset = tf.data.Dataset.zip((peaks_dataset, dataset))
+    dataset = tf.data.Dataset.zip((peaks_dataset,
+                                   tf.data.Dataset.zip((dataset,
+                                                        filenames_ds))))
 
     def _filter_empty(peaks, maps):
         return tf.reduce_sum(peaks) > 0
 
     dataset = dataset.filter(_filter_empty)
+    dataset = dataset.cache()
 
-    dataset = dataset.cache(cache)
+    # dataset = tf.data.Dataset.zip((dataset, dataset))
+
+
     if shuffle:
-        dataset = dataset.shuffle(buffer_size=10)
+        dataset = dataset.shuffle(buffer_size=100)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(n_epochs)
     return dataset, target_shape
@@ -107,14 +125,45 @@ class Peaks2MapsDataset:
         else:
             self.nthreads = nthreads
 
+        # self.training_dataset, self.target_shape = _get_data(self.nthreads,
+        #                                                      self.train_batch_size,
+        #                                                      "D:/data/hcp_statmaps/train",
+        #                                                      n_epochs,
+        #                                                      'D:/drive/workspace/peaks2maps/cache_train',
+        #                                                      True,
+        #                                                      self.target_shape,
+        #                                                      True)
+        # self.validation_dataset, validation_shape = _get_data(self.nthreads,
+        #                                                       self.validation_batch_size,
+        #                                                       "D:/data/hcp_statmaps/val",
+        #                                                       1,
+        #                                                       'D:/drive/workspace/peaks2maps/cache_val',
+        #                                                       False,
+        #                                                       self.target_shape,
+        #                                                       False)
+        # assert(self.target_shape == validation_shape)
+        #
+        # # You can use feedable iterators with a variety of different kinds of iterator
+        # # (such as one-shot and initializable iterators).
+        # self.training_iterator = self.training_dataset.make_one_shot_iterator()
+        # self.validation_iterator = self.validation_dataset.make_one_shot_iterator()
+
+    def train_input_fn(self):
         self.training_dataset, self.target_shape = _get_data(self.nthreads,
                                                              self.train_batch_size,
                                                              "D:/data/hcp_statmaps/train",
-                                                             n_epochs,
+                                                             self.n_epochs,
                                                              'D:/drive/workspace/peaks2maps/cache_train',
                                                              True,
                                                              self.target_shape,
                                                              True)
+
+        # You can use feedable iterators with a variety of different kinds of iterator
+        # (such as one-shot and initializable iterators).
+        self.training_iterator = self.training_dataset.make_one_shot_iterator()
+        return self.training_iterator.get_next()
+
+    def eval_input_fn(self):
         self.validation_dataset, validation_shape = _get_data(self.nthreads,
                                                               self.validation_batch_size,
                                                               "D:/data/hcp_statmaps/val",
@@ -123,50 +172,40 @@ class Peaks2MapsDataset:
                                                               False,
                                                               self.target_shape,
                                                               False)
-        assert(self.target_shape == validation_shape)
 
-        self.handle = tf.placeholder(tf.string, shape=[])
-        iterator = tf.data.Iterator.from_string_handle(
-            self.handle, self.training_dataset.output_types,
-            self.training_dataset.output_shapes)
-        self.input_image, self.target_image = iterator.get_next()
+        self.validation_iterator = self.validation_dataset.make_one_shot_iterator()
+        return self.validation_iterator.get_next()
 
-        # You can use feedable iterators with a variety of different kinds of iterator
-        # (such as one-shot and initializable iterators).
-        self.training_iterator = self.training_dataset.make_one_shot_iterator()
-        self.validation_iterator = self.validation_dataset.make_initializable_iterator()
+def get_plot_op(image, target_shape, summary_label):
+    target_affine, _ = _get_resize_arg(target_shape)
+    target_affine_tf = tf.constant(target_affine)
 
+    def _gen_plot(data, target_affine):
+        if len(data.shape) == 4:
+            data = data[0, :, :, :]
+        args = {"colorbar": True,
+                "plot_abs": False,
+                "threshold": 0,
+                "cmap": "RdBu_r",
+                }
+        nii = nb.Nifti1Image(np.squeeze(data), target_affine)
+        buf = io.BytesIO()
+        p = plot_glass_brain(nii, black_bg=False,
+                             display_mode='lyrz',
+                             vmin=-1,
+                             vmax=1,
+                             **args)
+        p.savefig(buf)
+        p.close()
+        buf.seek(0)
+        val = buf.getvalue()
+        return val
 
-    def get_plot_op(self, image, summary_label):
-        target_affine, _ = _get_resize_arg(self.target_shape)
-        target_affine_tf = tf.constant(target_affine)
-
-        def _gen_plot(data, target_affine):
-            if len(data.shape) == 4:
-                data = data[0, :, :, :]
-            args = {"colorbar": True,
-                    "plot_abs": False,
-                    "threshold": 0,
-                    "cmap": "RdBu_r",
-                    }
-            nii = nb.Nifti1Image(np.squeeze(data), target_affine)
-            buf = io.BytesIO()
-            p = plot_glass_brain(nii, black_bg=False,
-                                 display_mode='lyrz',
-                                 vmin=-1,
-                                 vmax=1,
-                                 **args)
-            p.savefig(buf)
-            p.close()
-            buf.seek(0)
-            val = buf.getvalue()
-            return val
-
-        plot = tf.py_func(_gen_plot, [image, target_affine_tf], tf.string)
-        image = tf.image.decode_png(plot)
-        # Add the batch dimension
-        image = tf.expand_dims(image, 0)
-        summary_image = tf.summary.image(summary_label,
-                                         image, max_outputs=200000)
-        return summary_image
+    plot = tf.py_func(_gen_plot, [image, target_affine_tf], tf.string)
+    image = tf.image.decode_png(plot)
+    # Add the batch dimension
+    image = tf.expand_dims(image, 0)
+    summary_image = tf.summary.image(summary_label,
+                                     image, max_outputs=10)
+    return summary_image
 
