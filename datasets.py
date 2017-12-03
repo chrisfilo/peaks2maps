@@ -1,20 +1,20 @@
 import matplotlib as mpl
 mpl.use('agg')
+
 from glob import glob
 import tensorflow as tf
 import os
 import nibabel as nb
 import numpy as np
-from scipy.ndimage.interpolation import zoom
 from nilearn import image
 from nilearn.plotting import plot_glass_brain
 from skimage.feature import peak_local_max
 import io
 
-
 def _get_resize_arg(target_shape):
     mni_shape_mm = np.array([148.0, 184.0, 156.0])
-    target_resolution_mm = np.ceil(mni_shape_mm / np.array(target_shape)).astype(
+    target_resolution_mm = np.ceil(
+        mni_shape_mm / np.array(target_shape)).astype(
         np.int32)
     target_affine = np.array([[4., 0., 0., -75.],
                               [0., 4., 0., -105.],
@@ -40,7 +40,7 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
         nii = image.smooth_img(nii, 9)
         data = nii.get_data()
         m = np.max(np.abs(data))
-        data = data/m
+        data = data / m
         data = data.astype(np.float32)
         return data
 
@@ -75,8 +75,6 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
                                 num_parallel_calls=nthreads)
         dataset = dataset.concatenate(negatives)
 
-    #dataset = dataset.cache()
-
     def _extract_peaks(data):
         peaks = peak_local_max(data, indices=False, min_distance=3,
                                threshold_abs=0.70).astype(np.float32)
@@ -85,13 +83,11 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
 
     peaks_dataset = dataset.map(
         lambda data: tuple(tf.py_func(_extract_peaks,
-                                          [data],
-                                          [tf.float32])),
+                                      [data],
+                                      [tf.float32])),
         num_parallel_calls=nthreads)
 
     peaks_dataset = peaks_dataset.map(_resize)
-    #peaks_dataset = peaks_dataset.cache(cache + "_peaks")
-
     dataset = tf.data.Dataset.zip((peaks_dataset,
                                    tf.data.Dataset.zip((dataset,
                                                         filenames_ds))))
@@ -104,12 +100,12 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
 
     # dataset = tf.data.Dataset.zip((dataset, dataset))
 
-
     if shuffle:
         dataset = dataset.shuffle(buffer_size=100)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(n_epochs)
     return dataset, target_shape
+
 
 class Peaks2MapsDataset:
 
@@ -125,33 +121,10 @@ class Peaks2MapsDataset:
         else:
             self.nthreads = nthreads
 
-        # self.training_dataset, self.target_shape = _get_data(self.nthreads,
-        #                                                      self.train_batch_size,
-        #                                                      "D:/data/hcp_statmaps/train",
-        #                                                      n_epochs,
-        #                                                      'D:/drive/workspace/peaks2maps/cache_train',
-        #                                                      True,
-        #                                                      self.target_shape,
-        #                                                      True)
-        # self.validation_dataset, validation_shape = _get_data(self.nthreads,
-        #                                                       self.validation_batch_size,
-        #                                                       "D:/data/hcp_statmaps/val",
-        #                                                       1,
-        #                                                       'D:/drive/workspace/peaks2maps/cache_val',
-        #                                                       False,
-        #                                                       self.target_shape,
-        #                                                       False)
-        # assert(self.target_shape == validation_shape)
-        #
-        # # You can use feedable iterators with a variety of different kinds of iterator
-        # # (such as one-shot and initializable iterators).
-        # self.training_iterator = self.training_dataset.make_one_shot_iterator()
-        # self.validation_iterator = self.validation_dataset.make_one_shot_iterator()
-
     def train_input_fn(self):
         self.training_dataset, self.target_shape = _get_data(self.nthreads,
                                                              self.train_batch_size,
-                                                             "D:/data/hcp_statmaps/train",
+                                                             "D:/data/hcp_statmaps/train_not_language",
                                                              self.n_epochs,
                                                              'D:/drive/workspace/peaks2maps/cache_train',
                                                              True,
@@ -166,15 +139,16 @@ class Peaks2MapsDataset:
     def eval_input_fn(self):
         self.validation_dataset, validation_shape = _get_data(self.nthreads,
                                                               self.validation_batch_size,
-                                                              "D:/data/hcp_statmaps/val",
+                                                              "D:/data/hcp_statmaps/val_no_language_unseen_partitipants",
                                                               1,
-                                                              'D:/drive/workspace/peaks2maps/cache_val',
+                                                              'D:/data/hcp_statmaps/val_no_language_unseen_partitipants',
                                                               False,
                                                               self.target_shape,
                                                               False)
 
         self.validation_iterator = self.validation_dataset.make_one_shot_iterator()
         return self.validation_iterator.get_next()
+
 
 def get_plot_op(image, target_shape, summary_label):
     target_affine, _ = _get_resize_arg(target_shape)
@@ -208,4 +182,3 @@ def get_plot_op(image, target_shape, summary_label):
     summary_image = tf.summary.image(summary_label,
                                      image, max_outputs=10)
     return summary_image
-
