@@ -3,15 +3,17 @@ import tensorflow as tf
 # import trivial_model as model
 # import models.unet as model
 # import models.recnn as model
-import models.meshnet as model
+#import models.meshnet as model
 # import models.vae as model
+# import models.trivial_conv as model
+import models.fixed_conv as model
 from datasets import Peaks2MapsDataset
 import datetime
 import models.utils as utils
 
 from tensorflow.contrib.learn.python.learn import learn_runner
 
-tf.logging.set_verbosity(tf.logging.DEBUG)
+tf.logging.set_verbosity(tf.logging.INFO)
 
 
 def experiment_fn(run_config, params):

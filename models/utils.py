@@ -1,6 +1,8 @@
 import os
 import tensorflow as tf
 from datasets import get_plot_op
+import numpy as np
+import scipy.stats as st
 
 
 def metric_fn(labels, predictions):
@@ -53,6 +55,7 @@ def get_evaluation_hooks(features, labels, predictions, filenames, mode,
             summary_op=tf.summary.merge(summaries))]
     else:
         evaluation_hooks = None
+
     return evaluation_hooks
 
 
@@ -61,3 +64,29 @@ def get_estimator(model_fn, run_config, params):
                                   params=params,  # HParams
                                   config=run_config  # RunConfig
                                   )
+
+def gkern(target_shape):
+    """Returns a 2D Gaussian kernel array."""
+    mni_shape_mm = np.array([148.0, 184.0, 156.0])
+    target_resolution_mm = np.ceil(
+        mni_shape_mm / np.array(target_shape)).astype(
+        np.int32)
+
+    sigma_mm = 9/2.35482004503
+    sigma_vox = sigma_mm/target_resolution_mm
+
+    x, y, z = np.mgrid[-1.0:1.0:5j, -1.0:1.0:5j, -1.0:1.0:5j]
+    # Need an (N, 2) array of (x, y) pairs.
+    xyz = np.column_stack([x.flat, y.flat, z.flat])
+
+    mu = np.array([0.0, 0.0, 0.0])
+
+    sigma = np.array(sigma_vox)
+    covariance = np.diag(sigma ** 2)
+
+    z = st.multivariate_normal.pdf(xyz, mean=mu, cov=covariance)
+    z = z.reshape(x.shape)
+    z = z - z.min()
+    z = z / z.max()
+    z = z.astype(np.float32)
+    return z

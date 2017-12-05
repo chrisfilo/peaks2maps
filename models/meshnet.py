@@ -54,7 +54,7 @@ def model_fn(features, labels, mode, params):
 
     predictions = tf.squeeze(prev_layer, -1)
 
-    predictions = tf.Print(predictions, filenames, message="test")
+    #predictions = tf.Print(predictions, filenames, message="test")
 
     loss = tf.losses.mean_squared_error(labels, predictions)
 
