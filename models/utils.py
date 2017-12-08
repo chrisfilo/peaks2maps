@@ -5,10 +5,28 @@ import numpy as np
 import scipy.stats as st
 
 
-def metric_fn(labels, predictions):
+def metric_fn(features, labels, predictions):
+    with tf.variable_scope("pearson_r_masked"):
+        ale_output = tf.layers.conv3d(features,
+                                      filters=1,
+                                      strides=1,
+                                      kernel_initializer=tf.constant_initializer(1),
+                                      activation=None,
+                                      kernel_size=5,
+                                      bias_initializer=None,
+                                      use_bias=False,
+                                      padding='same',
+                                      trainable=False)
+
+        weights = tf.cast(tf.equal(ale_output, 0), tf.float32)
+        pearson_r_masked = tf.contrib.metrics.streaming_pearson_correlation(labels,
+                                                         predictions,
+                                                         weights=weights)
+
     return {
         "pearson_r": tf.contrib.metrics.streaming_pearson_correlation(labels,
                                                                       predictions),
+        "pearson_r_masked": pearson_r_masked,
         "mean_absolute_error": tf.contrib.metrics.streaming_mean_absolute_error(
             labels, predictions),
         "mean_squared_error": tf.contrib.metrics.streaming_mean_squared_error(

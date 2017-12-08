@@ -36,7 +36,8 @@ def model_fn(features, labels, mode, params):
         predictions=predictions,
         loss=loss,
         train_op=tf.no_op(),
-        eval_metric_ops=metric_fn(labels, predictions),
+        eval_metric_ops=metric_fn(input_images_placeholder, labels,
+                                  predictions),
         evaluation_hooks=get_evaluation_hooks(features, labels,
                                               predictions, filenames,
                                               mode, params)

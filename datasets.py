@@ -9,6 +9,7 @@ import numpy as np
 from nilearn import image
 from nilearn.plotting import plot_glass_brain
 from skimage.feature import peak_local_max
+import random
 import io
 
 def _get_resize_arg(target_shape):
@@ -28,16 +29,22 @@ def _get_resize_arg(target_shape):
 
 def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
               target_shape, add_nagatives=False):
-    paths = tf.constant(glob(os.path.join(src_folder, "*.nii.gz")))
+    in_images = glob(os.path.join(src_folder, "*.nii.gz"))
+    if shuffle:
+        random.shuffle(in_images)
+    paths = tf.constant(in_images)
     paths_ds = tf.data.Dataset.from_tensor_slices((paths,))
 
     target_affine, target_shape = _get_resize_arg(target_shape)
 
     def _read_py_function(filename, target_affine, target_shape):
-        nii = image.resample_img(
-            filename.decode('utf-8'),
+        nii = nb.load(filename.decode('utf-8'))
+        data = nii.get_data()
+        data[np.isnan(data)] = 0
+        nii = nb.Nifti1Image(data, nii.affine)
+        nii = image.resample_img(nii,
             target_affine=target_affine, target_shape=target_shape)
-        nii = image.smooth_img(nii, 9)
+        nii = image.smooth_img(nii, 4)
         data = nii.get_data()
         m = np.max(np.abs(data))
         data = data / m
@@ -101,7 +108,7 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
     # dataset = tf.data.Dataset.zip((dataset, dataset))
 
     if shuffle:
-        dataset = dataset.shuffle(buffer_size=100)
+        dataset = dataset.shuffle(buffer_size=1000)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(n_epochs)
     return dataset, target_shape
@@ -124,7 +131,7 @@ class Peaks2MapsDataset:
     def train_input_fn(self):
         self.training_dataset, self.target_shape = _get_data(self.nthreads,
                                                              self.train_batch_size,
-                                                             "D:/data/hcp_statmaps/train_not_language",
+                                                             "D:/data/neurovault/neurovault/vetted/train",
                                                              self.n_epochs,
                                                              'D:/drive/workspace/peaks2maps/cache_train',
                                                              True,
@@ -139,7 +146,7 @@ class Peaks2MapsDataset:
     def eval_input_fn(self):
         self.validation_dataset, validation_shape = _get_data(self.nthreads,
                                                               self.validation_batch_size,
-                                                              "D:/data/hcp_statmaps/val_no_language_unseen_partitipants",
+                                                              "D:/data/neurovault/neurovault/vetted/eval",
                                                               1,
                                                               'D:/data/hcp_statmaps/val_no_language_unseen_partitipants',
                                                               False,

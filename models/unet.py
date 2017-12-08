@@ -3,6 +3,8 @@ from functools import reduce
 import math
 import numpy as np
 
+from .utils import get_evaluation_hooks, metric_fn
+
 name = "unet"
 
 def batchnorm(input):
@@ -18,7 +20,7 @@ def batchnorm(input):
         normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale, variance_epsilon=variance_epsilon)
         return normalized
 
-def get_inference(input_images_placeholder, input_shape, training_flag):
+def model_fn(features, labels, mode, params):
     """Build the MNIST model up to where it may be used for inference.
     Args:
 
@@ -28,7 +30,10 @@ def get_inference(input_images_placeholder, input_shape, training_flag):
     ngf = 64
     layers = []
 
-    input_images_placeholder = tf.expand_dims(input_images_placeholder, -1)
+    training_flag = mode == tf.contrib.learn.ModeKeys.TRAIN
+
+    input_images_placeholder = tf.expand_dims(features, -1)
+    labels, filenames = labels
 
     conv_args = {"strides": 2,
                  "kernel_size": 4,
@@ -126,19 +131,33 @@ def get_inference(input_images_placeholder, input_shape, training_flag):
         output = tf.layers.conv3d_transpose(input, 1, **deconv_args)
         layers.append(output)
 
-    return tf.squeeze(layers[-1], -1)
+    predictions = tf.squeeze(layers[-1], -1)
+    predictions = tf.Print(predictions, filenames, message="test")
 
+    loss = tf.losses.mean_squared_error(labels, predictions)
 
-def get_loss(input_images_placeholder, target_images_placeholder):
-    """Calculates the loss from the logits and the labels.
-    Args:
+    # Add a scalar summary for the snapshot loss.
+    # Create the gradient descent optimizer with the given learning rate.
+    optimizer = tf.train.AdamOptimizer(params.learning_rate)
+    # Use the optimizer to apply the gradients that minimize the loss
+    # (and also increment the global step counter) as a single training step.
+    extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    with tf.control_dependencies(extra_update_ops):
+        train_op = optimizer.minimize(loss,
+                                      global_step=tf.train.get_global_step())
 
-    Returns:
-      loss: Loss tensor of type float.
-    """
+    return tf.estimator.EstimatorSpec(
+        mode=mode,
+        predictions=predictions,
+        loss=loss,
+        train_op=train_op,
+        eval_metric_ops=metric_fn(input_images_placeholder, labels,
+                                  predictions),
+        evaluation_hooks=get_evaluation_hooks(features, labels,
+                                              predictions, filenames,
+                                              mode, params)
+    )
 
-    loss = tf.losses.absolute_difference(target_images_placeholder, input_images_placeholder)
-    return loss
 
 
 
