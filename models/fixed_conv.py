@@ -10,7 +10,7 @@ def model_fn(features, labels, mode, params):
     """
     input_images_placeholder = tf.expand_dims(features, -1)
 
-    labels, filenames = labels
+    # labels, filenames = labels
 
     kern = gkern(params.target_shape)
 
@@ -29,16 +29,16 @@ def model_fn(features, labels, mode, params):
 
     #predictions = tf.Print(predictions, filenames, message="test")
 
-    loss = tf.losses.mean_squared_error(labels, predictions)
+    # loss = tf.losses.mean_squared_error(labels, predictions)
 
     return tf.estimator.EstimatorSpec(
         mode=mode,
         predictions=predictions,
-        loss=loss,
-        train_op=tf.no_op(),
-        eval_metric_ops=metric_fn(input_images_placeholder, labels,
-                                  predictions),
-        evaluation_hooks=get_evaluation_hooks(features, labels,
-                                              predictions, filenames,
-                                              mode, params)
+        # loss=loss,
+        # train_op=tf.no_op(),
+        # eval_metric_ops=metric_fn(input_images_placeholder, labels,
+        #                           predictions),
+        # evaluation_hooks=get_evaluation_hooks(features, labels,
+        #                                       predictions, filenames,
+        #                                       mode, params)
     )

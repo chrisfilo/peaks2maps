@@ -30,10 +30,9 @@ def model_fn(features, labels, mode, params):
     ngf = 64
     layers = []
 
-    training_flag = mode == tf.contrib.learn.ModeKeys.TRAIN
+    training_flag = mode == tf.estimator.ModeKeys.TRAIN
 
     input_images_placeholder = tf.expand_dims(features, -1)
-    labels, filenames = labels
 
     conv_args = {"strides": 2,
                  "kernel_size": 4,
@@ -132,31 +131,37 @@ def model_fn(features, labels, mode, params):
         layers.append(output)
 
     predictions = tf.squeeze(layers[-1], -1)
-    predictions = tf.Print(predictions, filenames, message="test")
 
-    loss = tf.losses.mean_squared_error(labels, predictions)
+    if mode == tf.estimator.ModeKeys.PREDICT:
+        return tf.estimator.EstimatorSpec(
+            mode=mode,
+            predictions=predictions
+        )
+    else:
+        labels, filenames = labels
+        loss = tf.losses.mean_squared_error(labels, predictions)
 
-    # Add a scalar summary for the snapshot loss.
-    # Create the gradient descent optimizer with the given learning rate.
-    optimizer = tf.train.AdamOptimizer(params.learning_rate)
-    # Use the optimizer to apply the gradients that minimize the loss
-    # (and also increment the global step counter) as a single training step.
-    extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    with tf.control_dependencies(extra_update_ops):
-        train_op = optimizer.minimize(loss,
-                                      global_step=tf.train.get_global_step())
+        # Add a scalar summary for the snapshot loss.
+        # Create the gradient descent optimizer with the given learning rate.
+        optimizer = tf.train.AdamOptimizer(params.learning_rate)
+        # Use the optimizer to apply the gradients that minimize the loss
+        # (and also increment the global step counter) as a single training step.
+        extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(extra_update_ops):
+            train_op = optimizer.minimize(loss,
+                                          global_step=tf.train.get_global_step())
 
-    return tf.estimator.EstimatorSpec(
-        mode=mode,
-        predictions=predictions,
-        loss=loss,
-        train_op=train_op,
-        eval_metric_ops=metric_fn(input_images_placeholder, labels,
-                                  predictions),
-        evaluation_hooks=get_evaluation_hooks(features, labels,
-                                              predictions, filenames,
-                                              mode, params)
-    )
+        return tf.estimator.EstimatorSpec(
+            mode=mode,
+            predictions=predictions,
+            loss=loss,
+            train_op=train_op,
+            eval_metric_ops=metric_fn(input_images_placeholder, labels,
+                                      predictions),
+            evaluation_hooks=get_evaluation_hooks(features, labels,
+                                                  predictions, filenames,
+                                                  mode, params)
+        )
 
 
 

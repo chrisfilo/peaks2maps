@@ -44,7 +44,7 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
         nii = nb.Nifti1Image(data, nii.affine)
         nii = image.resample_img(nii,
             target_affine=target_affine, target_shape=target_shape)
-        nii = image.smooth_img(nii, 4)
+        nii = image.smooth_img(nii, 4) # !!!!!!
         data = nii.get_data()
         m = np.max(np.abs(data))
         data = data / m
@@ -129,7 +129,7 @@ class Peaks2MapsDataset:
             self.nthreads = nthreads
 
     def train_input_fn(self):
-        self.training_dataset, self.target_shape = _get_data(self.nthreads,
+        self.training_dataset, self.target_shape = _get_data(8,
                                                              self.train_batch_size,
                                                              "D:/data/neurovault/neurovault/vetted/train",
                                                              self.n_epochs,
@@ -144,9 +144,10 @@ class Peaks2MapsDataset:
         return self.training_iterator.get_next()
 
     def eval_input_fn(self):
-        self.validation_dataset, validation_shape = _get_data(self.nthreads,
+        self.validation_dataset, validation_shape = _get_data(8,
                                                               self.validation_batch_size,
-                                                              "D:/data/neurovault/neurovault/vetted/eval",
+                                                              "D:/data/neurovault/neurovault/vetted/eval", #!!!
+                                                              #"D:/data/hcp_statmaps/val_all_tasks",
                                                               1,
                                                               'D:/data/hcp_statmaps/val_no_language_unseen_partitipants',
                                                               False,
@@ -189,3 +190,10 @@ def get_plot_op(image, target_shape, summary_label):
     summary_image = tf.summary.image(summary_label,
                                      image, max_outputs=10)
     return summary_image
+
+
+def save_nii(data, target_shape, path):
+    target_affine, _ = _get_resize_arg(target_shape)
+
+    nii = nb.Nifti1Image(np.squeeze(data), target_affine)
+    nii.to_filename(path)

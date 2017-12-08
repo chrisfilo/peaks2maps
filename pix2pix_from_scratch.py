@@ -43,7 +43,7 @@ if __name__ == '__main__':
     log_dir = "logs"
     current_run_subdir = os.path.join(
         "run_" + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    model_dir = os.path.join(log_dir, model.name, "2_withneg")# current_run_subdir)
+    model_dir = os.path.join(log_dir, model.name, "3_nohcp")# current_run_subdir)
 
     run_config = tf.contrib.learn.RunConfig(
         save_checkpoints_secs=1200,
@@ -63,7 +63,10 @@ if __name__ == '__main__':
         #                 "100307_SOCIAL.nii.gz", "100307_LANGUAGE.nii.gz"],
         images_to_plot=["5494.nii.gz", "10263.nii.gz",
                           "8288.nii.gz", "31492.nii.gz",
-                          "32461.nii.gz", "37992.nii.gz"]
+                          "32461.nii.gz", "37992.nii.gz", "l_100307_EMOTION.nii.gz",
+                         "l_100307_FACE-SHAPE.nii.gz",
+                        "l_100307_GAMBLING.nii.gz", "l_100307_RELATIONAL.nii.gz",
+                        "l_100307_SOCIAL.nii.gz", "l_100307_LANGUAGE.nii.gz"]
     )
 
     learn_runner.run(

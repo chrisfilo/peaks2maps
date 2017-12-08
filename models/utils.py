@@ -35,7 +35,7 @@ def metric_fn(features, labels, predictions):
 
 def get_evaluation_hooks(features, labels, predictions, filenames, mode,
                          params):
-    if mode == tf.contrib.learn.ModeKeys.EVAL:
+    if mode == tf.estimator.ModeKeys.EVAL:
         summaries = []
         for image_to_plot in params.images_to_plot:
             is_to_plot = tf.equal(tf.squeeze(filenames), image_to_plot)
