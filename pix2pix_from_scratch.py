@@ -1,10 +1,13 @@
 import os
 import tensorflow as tf
 # import trivial_model as model
+#import models.unet2 as model
 import models.unet as model
 #import models.pix2pix as model
 #import models.unetpool as model
 #import models.recnn as model
+from tensorflow.python.estimator.run_config import RunConfig
+
 #import models.meshnet as model
 # import models.vae as model
 # import models.trivial_conv as model
@@ -43,11 +46,17 @@ if __name__ == '__main__':
     log_dir = "logs"
     current_run_subdir = os.path.join(
         "run_" + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    model_dir = os.path.join(log_dir, model.name, "3_nohcp")# current_run_subdir)
+    model_dir = os.path.join(log_dir, model.name, "8")# current_run_subdir)
 
+    session_config = tf.ConfigProto()
+    session_config.intra_op_parallelism_threads = 8
+    session_config.inter_op_parallelism_threads = 8
     run_config = tf.contrib.learn.RunConfig(
-        save_checkpoints_secs=1200,
-        model_dir=model_dir)
+        save_checkpoints_secs=600,
+        model_dir=model_dir,
+        save_summary_steps=100,
+        log_step_count_steps=100,
+        session_config=session_config)
 
     params = tf.contrib.training.HParams(
         learning_rate=0.0002,

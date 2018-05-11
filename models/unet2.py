@@ -3,9 +3,10 @@ from functools import reduce
 import math
 import numpy as np
 
+from models.ops import dropout3d
 from .utils import get_evaluation_hooks, metric_fn
 
-name = "unet"
+name = "unet2"
 
 def batchnorm(input):
     with tf.variable_scope("batchnorm"):
@@ -66,13 +67,13 @@ def model_fn(features, labels, mode, params):
         layers.append(output)
 
     layer_specs = [
-        (ngf * 2, 0.5),
+        (ngf * 2, 0.25),
         # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
-        (ngf * 2, 0.5),
+        (ngf * 2, 0.25),
         # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
-        (ngf * 4, 0.5),
+        (ngf * 4, 0.25),
         #encoder_4: [batch, 32, 32, ngf * 4] => [batch, 16, 16, ngf * 8]
-        (ngf * 8, 0.5),
+        (ngf * 8, 0.25),
         # encoder_5: [batch, 16, 16, ngf * 8] => [batch, 8, 8, ngf * 8]
         # ngf * 8,
         # # encoder_6: [batch, 8, 8, ngf * 8] => [batch, 4, 4, ngf * 8]
@@ -84,20 +85,20 @@ def model_fn(features, labels, mode, params):
             output = pad_and_conv(layers[-1], out_channels, conv_args)
             # output = tf.layers.batch_normalization(convolved, **batchnorm_args)
             if dropout > 0.0:
-                output = tf.layers.dropout(output, rate=dropout,
+                output = dropout3d(output, rate=dropout,
                                            training=training_flag)
             layers.append(output)
 
     layer_specs = [
         # (ngf * 8, 0.5),
         # # decoder_6: [batch, 4, 4, ngf * 8 * 2] => [batch, 8, 8, ngf * 8 * 2]
-        (ngf * 8, 0.5),
+        (ngf * 8, 0.25),
         # decoder_5: [batch, 8, 8, ngf * 8 * 2] => [batch, 16, 16, ngf * 8 * 2]
-        (ngf * 4, 0.5),
+        (ngf * 4, 0.25),
         # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
-        (ngf * 2, 0.5),
+        (ngf * 2, 0.25),
         # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
-        (ngf * 2, 0.5),
+        (ngf * 2, 0.25),
         # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
     ]
 
@@ -119,7 +120,7 @@ def model_fn(features, labels, mode, params):
             #                                        **batchnorm_args)
 
             if dropout > 0.0:
-                output = tf.layers.dropout(output, rate=dropout,
+                output = dropout3d(output, rate=dropout,
                                            training=training_flag)
 
             layers.append(output)

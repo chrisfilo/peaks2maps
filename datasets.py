@@ -11,6 +11,7 @@ from nilearn.plotting import plot_glass_brain
 from skimage.feature import peak_local_max
 import random
 import io
+import scipy.ndimage
 
 def _get_resize_arg(target_shape):
     mni_shape_mm = np.array([148.0, 184.0, 156.0])
@@ -28,8 +29,8 @@ def _get_resize_arg(target_shape):
 
 
 def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
-              target_shape, add_nagatives=False):
-    in_images = glob(os.path.join(src_folder, "*.nii.gz"))
+              target_shape, add_nagatives, smoothness_levels, cluster_forming_thrs):
+    in_images = glob(os.path.join(src_folder, "*.nii.gz"))[:300]
     if shuffle:
         random.shuffle(in_images)
     paths = tf.constant(in_images)
@@ -37,75 +38,114 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
 
     target_affine, target_shape = _get_resize_arg(target_shape)
 
-    def _read_py_function(filename, target_affine, target_shape):
-        nii = nb.load(filename.decode('utf-8'))
+    target_affine_tf = tf.constant(target_affine)
+    target_shape_tf = tf.constant(target_shape)
+
+    def _read_and_resample(path, target_affine, target_shape):
+        path_str = path.decode('utf-8').split(os.sep)[-1]
+        nii = nb.load(path_str)
         data = nii.get_data()
         data[np.isnan(data)] = 0
         nii = nb.Nifti1Image(data, nii.affine)
         nii = image.resample_img(nii,
-            target_affine=target_affine, target_shape=target_shape)
-        nii = image.smooth_img(nii, 4) # !!!!!!
-        data = nii.get_data()
-        m = np.max(np.abs(data))
-        data = data / m
-        data = data.astype(np.float32)
-        return data
+                                 target_affine=target_affine,
+                                 target_shape=target_shape)
+        data = nii.get_data().astype(np.float32)
+        tf.reshape(data, target_shape)
+        return (tf.reshape(data, target_shape), path_str.split(os.sep)[-1])
 
-    target_affine_tf = tf.constant(target_affine)
-    target_shape_tf = tf.constant(target_shape)
-    dataset = paths_ds.map(
-        lambda filename: tuple(tf.py_func(_read_py_function,
-                                          [filename,
-                                           target_affine_tf,
-                                           target_shape_tf],
-                                          [tf.float32])),
-        num_parallel_calls=nthreads)
+    data_ds = paths_ds.map(
+        lambda path: tuple(tf.py_func(_read_and_resample,
+                                      [path, target_affine_tf,
+                                       target_shape_tf],
+                                      [tf.float32, tf.string])),
+        num_parallel_calls=8)
 
-    def _split_py_function(path):
-        import os
-        return path.decode('utf-8').split(os.sep)[-1]
+    def smooth(data, filename):
+        data = tf.data.Dataset.from_tensors(data)
 
-    filenames_ds = paths_ds.map(
-        lambda path: tuple(tf.py_func(_split_py_function,
-                                      [path],
-                                      [tf.string])),
-        num_parallel_calls=nthreads)
+        def _smooth(data, target_affine, smoothness_level):
+            nii = nb.Nifti1Image(data, target_affine)
+            nii = image.smooth_img(nii, smoothness_level)  # !!!!!!
+            data = nii.get_data()
+            m = np.max(np.abs(data))
+            data = data / m
+            data = data.astype(np.float32)
+            return data
 
-    def _resize(data):
-        return tf.reshape(data, target_shape)
+        smoothed_ds = None
+        new_paths_ds = None
+        for smoothness_level in smoothness_levels:
+            sm = tf.py_func(_smooth, [data, target_affine_tf,
+                                      tf.constant(smoothness_level)],
+                            [np.float32])
+            tmp_smooth_ds = tf.data.Dataset.from_tensors(sm)
 
-    dataset = dataset.map(_resize, num_parallel_calls=nthreads)
+            if smoothed_ds is None:
+                smoothed_ds = tmp_smooth_ds
+                new_paths_ds = paths_ds
+            else:
+                print("concatenate")
+                smoothed_ds = smoothed_ds.concatenate(tmp_smooth_ds)
+                new_paths_ds = new_paths_ds.concatenate(paths_ds)
 
-    if add_nagatives:
-        print()
-        negatives = dataset.map(lambda data: tf.scalar_mul(-1, data),
-                                num_parallel_calls=nthreads)
-        dataset = dataset.concatenate(negatives)
+        def _resize(data):
+            return tf.reshape(data, target_shape)
 
-    def _extract_peaks(data):
-        peaks = peak_local_max(data, indices=False, min_distance=3,
-                               threshold_abs=0.70).astype(np.float32)
-        peaks[peaks > 0] == 1.0
-        return peaks
+        resized_ds = smoothed_ds.map(_resize, num_parallel_calls=8)
 
-    peaks_dataset = dataset.map(
-        lambda data: tuple(tf.py_func(_extract_peaks,
-                                      [data],
-                                      [tf.float32])),
-        num_parallel_calls=nthreads)
+        if add_nagatives:
+            print("adding negatives")
+            negatives = resized_ds.map(lambda data: tf.scalar_mul(-1, data),
+                                        num_parallel_calls=8)
+            resized_ds = resized_ds.concatenate(negatives)
+            filenames_ds = filenames_ds.concatenate(filenames_ds)
 
-    peaks_dataset = peaks_dataset.map(_resize)
-    dataset = tf.data.Dataset.zip((peaks_dataset,
-                                   tf.data.Dataset.zip((dataset,
-                                                        filenames_ds))))
+        def _extract_peaks(data, cluster_forming_thr):
+            new = np.zeros_like(data)
+            new[data > cluster_forming_thr] = 1
+            labels, n_features = scipy.ndimage.label(new)
+            for j in range(1, n_features+1):
+                if (labels == j).sum() < 5:
+                    labels[labels == j] = 0
+            peaks = peak_local_max(data, indices=False, min_distance=0,
+                                   num_peaks_per_label=1,
+                                   labels=labels,
+                                   threshold_abs=cluster_forming_thr).astype(np.float32)
+            peaks[peaks > 0] = 1.0
+            return peaks
 
-    def _filter_empty(peaks, maps):
-        return tf.reduce_sum(peaks) > 0
+        peaks_ds = None
+        for cluster_forming_thr in cluster_forming_thrs:
 
-    dataset = dataset.filter(_filter_empty)
+            tmp_peaks_ds = resized_ds.map(
+                lambda data: tuple(tf.py_func(_extract_peaks,
+                                              [data,
+                                               tf.constant(cluster_forming_thr)],
+                                              [tf.float32])),
+                num_parallel_calls=1)
+            if peaks_ds is None:
+                peaks_ds = tmp_peaks_ds
+                resized_ds = resized_ds
+                filenames_ds = filenames_ds
+            else:
+                peaks_ds = peaks_ds.concatenate(tmp_peaks_ds)
+                resized_ds = resized_ds.concatenate(resized_ds)
+                filenames_ds = filenames_ds.concatenate(filenames_ds)
+
+        peaks_ds = peaks_ds.map(_resize)
+
+        dataset = tf.data.Dataset.zip((peaks_ds,
+                                       tf.data.Dataset.zip((resized_ds,
+                                                            filenames_ds))))
+        def _filter_empty(peaks, maps):
+            return tf.reduce_sum(peaks) > 0
+        return dataset.filter(_filter_empty)
+
+    dataset = paths_ds.interleave(read_and_augument, cycle_length=8,
+                                  block_length=16)
+    dataset = dataset.prefetch(10000)
     dataset = dataset.cache()
-
-    # dataset = tf.data.Dataset.zip((dataset, dataset))
 
     if shuffle:
         dataset = dataset.shuffle(buffer_size=1000)
@@ -136,7 +176,9 @@ class Peaks2MapsDataset:
                                                              'D:/drive/workspace/peaks2maps/cache_train',
                                                              True,
                                                              self.target_shape,
-                                                             True)
+                                                             False,
+                                                             smoothness_levels=[4],# 6, 8],
+                                                             cluster_forming_thrs=[0.6])#, 0.65, 0.7])
 
         # You can use feedable iterators with a variety of different kinds of iterator
         # (such as one-shot and initializable iterators).
@@ -152,7 +194,9 @@ class Peaks2MapsDataset:
                                                               'D:/data/hcp_statmaps/val_no_language_unseen_partitipants',
                                                               False,
                                                               self.target_shape,
-                                                              False)
+                                                              False,
+                                                              smoothness_levels=[6],
+                                                              cluster_forming_thrs=[0.65])
 
         self.validation_iterator = self.validation_dataset.make_one_shot_iterator()
         return self.validation_iterator.get_next()
