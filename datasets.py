@@ -157,6 +157,7 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
     if shuffle:
         dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(1000, n_epochs))
     else:
+        dataset = dataset.prefetch(1000)
         dataset = dataset.repeat(n_epochs)
 
     dataset = dataset.batch(batch_size)
