@@ -46,11 +46,9 @@ if __name__ == '__main__':
     log_dir = "logs"
     current_run_subdir = os.path.join(
         "run_" + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    model_dir = os.path.join(log_dir, model.name, "8")# current_run_subdir)
+    model_dir = os.path.join(log_dir, model.name, "10")# current_run_subdir)
 
     session_config = tf.ConfigProto()
-    session_config.intra_op_parallelism_threads = 8
-    session_config.inter_op_parallelism_threads = 8
     run_config = tf.contrib.learn.RunConfig(
         save_checkpoints_secs=600,
         model_dir=model_dir,

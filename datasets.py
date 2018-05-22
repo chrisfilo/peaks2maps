@@ -30,56 +30,57 @@ def _get_resize_arg(target_shape):
 
 def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
               target_shape, add_nagatives, smoothness_levels, cluster_forming_thrs):
-    in_images = glob(os.path.join(src_folder, "*.nii.gz"))[:300]
-    if shuffle:
-        random.shuffle(in_images)
-    paths = tf.constant(in_images)
-    paths_ds = tf.data.Dataset.from_tensor_slices((paths,))
+    paths_ds = tf.data.Dataset.list_files(os.path.join(src_folder, "*.nii.gz"),
+                                           shuffle=shuffle)
 
-    target_affine, target_shape = _get_resize_arg(target_shape)
+    def read_and_augument(path, target_shape):
 
-    target_affine_tf = tf.constant(target_affine)
-    target_shape_tf = tf.constant(target_shape)
+        paths_ds = tf.data.Dataset.from_tensors((path,))
 
-    def _read_and_resample(path, target_affine, target_shape):
-        path_str = path.decode('utf-8').split(os.sep)[-1]
-        nii = nb.load(path_str)
-        data = nii.get_data()
-        data[np.isnan(data)] = 0
-        nii = nb.Nifti1Image(data, nii.affine)
-        nii = image.resample_img(nii,
-                                 target_affine=target_affine,
-                                 target_shape=target_shape)
-        data = nii.get_data().astype(np.float32)
-        tf.reshape(data, target_shape)
-        return (tf.reshape(data, target_shape), path_str.split(os.sep)[-1])
+        target_affine, target_shape = _get_resize_arg(target_shape)
 
-    data_ds = paths_ds.map(
-        lambda path: tuple(tf.py_func(_read_and_resample,
-                                      [path, target_affine_tf,
-                                       target_shape_tf],
-                                      [tf.float32, tf.string])),
-        num_parallel_calls=8)
+        def _read_and_resample(path, target_affine, target_shape):
+            path_str = path.decode('utf-8')
+            filename = path_str.split(os.sep)[-1]
+            nii = nb.load(path_str)
+            data = nii.get_data()
+            data[np.isnan(data)] = 0
+            nii = nb.Nifti1Image(data, nii.affine)
+            nii = image.resample_img(nii,
+                                     target_affine=target_affine,
+                                     target_shape=target_shape)
+            data = nii.get_data().astype(np.float32)
+            return data, filename
 
-    def smooth(data, filename):
-        data = tf.data.Dataset.from_tensors(data)
+        data_ds = paths_ds.map(
+            lambda path: tuple(tf.py_func(_read_and_resample,
+                                          [path, target_affine,
+                                           target_shape],
+                                          [tf.float32, tf.string],
+                                          name="read_and_resample"),
+                               ),
+            num_parallel_calls=2)
 
-        def _smooth(data, target_affine, smoothness_level):
+        def _smooth(data, filename, target_affine, smoothness_level):
             nii = nb.Nifti1Image(data, target_affine)
             nii = image.smooth_img(nii, smoothness_level)  # !!!!!!
             data = nii.get_data()
             m = np.max(np.abs(data))
             data = data / m
             data = data.astype(np.float32)
-            return data
+            return data, filename
 
         smoothed_ds = None
         new_paths_ds = None
         for smoothness_level in smoothness_levels:
-            sm = tf.py_func(_smooth, [data, target_affine_tf,
-                                      tf.constant(smoothness_level)],
-                            [np.float32])
-            tmp_smooth_ds = tf.data.Dataset.from_tensors(sm)
+            tmp_smooth_ds = data_ds.map(
+                lambda data, filename: tuple(tf.py_func(_smooth,
+                                                        [data, filename,
+                                                         target_affine,
+                                                         tf.constant(smoothness_level)],
+                                                        [np.float32, tf.string],
+                                                        name="smooth")),
+                num_parallel_calls=2)
 
             if smoothed_ds is None:
                 smoothed_ds = tmp_smooth_ds
@@ -89,17 +90,19 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
                 smoothed_ds = smoothed_ds.concatenate(tmp_smooth_ds)
                 new_paths_ds = new_paths_ds.concatenate(paths_ds)
 
-        def _resize(data):
-            return tf.reshape(data, target_shape)
+        def _resize_with_filename(data, filename):
+            reshaped = tf.reshape(data, target_shape)
+            return reshaped, filename
 
-        resized_ds = smoothed_ds.map(_resize, num_parallel_calls=8)
+        resized_ds = smoothed_ds.map(lambda data, filename: _resize_with_filename(data, filename),
+                                     num_parallel_calls=2)
 
         if add_nagatives:
             print("adding negatives")
-            negatives = resized_ds.map(lambda data: tf.scalar_mul(-1, data),
-                                        num_parallel_calls=8)
+            negatives = resized_ds.map(lambda data, filename: (tf.scalar_mul(-1, data), filename),
+                                       num_parallel_calls=2)
             resized_ds = resized_ds.concatenate(negatives)
-            filenames_ds = filenames_ds.concatenate(filenames_ds)
+            paths_ds = paths_ds.concatenate(paths_ds)
 
         def _extract_peaks(data, cluster_forming_thr):
             new = np.zeros_like(data)
@@ -119,38 +122,45 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
         for cluster_forming_thr in cluster_forming_thrs:
 
             tmp_peaks_ds = resized_ds.map(
-                lambda data: tuple(tf.py_func(_extract_peaks,
+                lambda data, _: tuple(tf.py_func(_extract_peaks,
                                               [data,
                                                tf.constant(cluster_forming_thr)],
                                               [tf.float32])),
-                num_parallel_calls=1)
+                num_parallel_calls=2)
             if peaks_ds is None:
                 peaks_ds = tmp_peaks_ds
                 resized_ds = resized_ds
-                filenames_ds = filenames_ds
+                paths_ds = paths_ds
             else:
                 peaks_ds = peaks_ds.concatenate(tmp_peaks_ds)
                 resized_ds = resized_ds.concatenate(resized_ds)
-                filenames_ds = filenames_ds.concatenate(filenames_ds)
+                paths_ds = paths_ds.concatenate(paths_ds)
+
+        def _resize(data):
+            reshaped = tf.reshape(data, target_shape)
+            return reshaped
 
         peaks_ds = peaks_ds.map(_resize)
 
-        dataset = tf.data.Dataset.zip((peaks_ds,
-                                       tf.data.Dataset.zip((resized_ds,
-                                                            filenames_ds))))
-        def _filter_empty(peaks, maps):
+        dataset = tf.data.Dataset.zip((peaks_ds, resized_ds))
+
+        def _filter_empty(peaks, _):
             return tf.reduce_sum(peaks) > 0
         return dataset.filter(_filter_empty)
 
-    dataset = paths_ds.interleave(read_and_augument, cycle_length=8,
-                                  block_length=16)
-    dataset = dataset.prefetch(10000)
-    dataset = dataset.cache()
+    dataset = paths_ds.apply(
+        tf.contrib.data.parallel_interleave(
+            lambda path: read_and_augument(path, target_shape),
+            cycle_length=4))
+    dataset = dataset.cache(cache)
 
     if shuffle:
-        dataset = dataset.shuffle(buffer_size=1000)
+        dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(1000, n_epochs))
+    else:
+        dataset = dataset.repeat(n_epochs)
+
     dataset = dataset.batch(batch_size)
-    dataset = dataset.repeat(n_epochs)
+
     return dataset, target_shape
 
 
@@ -191,7 +201,7 @@ class Peaks2MapsDataset:
                                                               "D:/data/neurovault/neurovault/vetted/eval", #!!!
                                                               #"D:/data/hcp_statmaps/val_all_tasks",
                                                               1,
-                                                              'D:/data/hcp_statmaps/val_no_language_unseen_partitipants',
+                                                              'D:/drive/workspace/peaks2maps/cache_eval',
                                                               False,
                                                               self.target_shape,
                                                               False,
