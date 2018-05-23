@@ -71,7 +71,6 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
             return data, filename
 
         smoothed_ds = None
-        new_paths_ds = None
         for smoothness_level in smoothness_levels:
             tmp_smooth_ds = data_ds.map(
                 lambda data, filename: tuple(tf.py_func(_smooth,
@@ -84,11 +83,9 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
 
             if smoothed_ds is None:
                 smoothed_ds = tmp_smooth_ds
-                new_paths_ds = paths_ds
             else:
                 print("concatenate")
                 smoothed_ds = smoothed_ds.concatenate(tmp_smooth_ds)
-                new_paths_ds = new_paths_ds.concatenate(paths_ds)
 
         def _resize_with_filename(data, filename):
             reshaped = tf.reshape(data, target_shape)
@@ -102,7 +99,6 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
             negatives = resized_ds.map(lambda data, filename: (tf.scalar_mul(-1, data), filename),
                                        num_parallel_calls=2)
             resized_ds = resized_ds.concatenate(negatives)
-            paths_ds = paths_ds.concatenate(paths_ds)
 
         def _extract_peaks(data, cluster_forming_thr):
             new = np.zeros_like(data)
@@ -184,12 +180,12 @@ class Peaks2MapsDataset:
                                                              self.train_batch_size,
                                                              "D:/data/neurovault/neurovault/vetted/train",
                                                              self.n_epochs,
-                                                             'D:/drive/workspace/peaks2maps/cache_train',
+                                                             'D:/drive/workspace/peaks2maps/cache_train_aug',
                                                              True,
                                                              self.target_shape,
-                                                             False,
-                                                             smoothness_levels=[4],# 6, 8],
-                                                             cluster_forming_thrs=[0.6])#, 0.65, 0.7])
+                                                             True,
+                                                             smoothness_levels=[4, 6, 8],
+                                                             cluster_forming_thrs=[0.6, 0.65, 0.7])
 
         # You can use feedable iterators with a variety of different kinds of iterator
         # (such as one-shot and initializable iterators).
