@@ -46,7 +46,7 @@ if __name__ == '__main__':
     log_dir = "logs"
     current_run_subdir = os.path.join(
         "run_" + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    model_dir = os.path.join(log_dir, model.name, "10_aug")# current_run_subdir)
+    model_dir = os.path.join(log_dir, model.name, "11_aug")# current_run_subdir)
 
     session_config = tf.ConfigProto()
     run_config = tf.contrib.learn.RunConfig(

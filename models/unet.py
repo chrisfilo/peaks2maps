@@ -50,7 +50,8 @@ def model_fn(features, labels, mode, params):
                       "gamma_initializer": tf.random_normal_initializer(1.0, 0.02),
                       "center": True,
                       "beta_initializer": tf.zeros_initializer(),
-                      "name": "batchnorm"}
+                      "name": "batchnorm",
+                      "training": mode == tf.estimator.ModeKeys.TRAIN}
 
     def pad_and_conv(input, out_channels, conv_args):
         padded_input = tf.pad(input,
@@ -81,8 +82,8 @@ def model_fn(features, labels, mode, params):
     for out_channels, dropout in layer_specs:
         with tf.variable_scope("encoder_%d" % (len(layers) + 1)):
             # [batch, in_height, in_width, in_channels] => [batch, in_height/2, in_width/2, out_channels]
-            output = pad_and_conv(layers[-1], out_channels, conv_args)
-            # output = tf.layers.batch_normalization(convolved, **batchnorm_args)
+            convolved = pad_and_conv(layers[-1], out_channels, conv_args)
+            output = tf.layers.batch_normalization(convolved, **batchnorm_args)
             if dropout > 0.0:
                 output = tf.layers.dropout(output, rate=dropout,
                                            training=training_flag)
@@ -114,9 +115,8 @@ def model_fn(features, labels, mode, params):
 
             output = tf.layers.conv3d_transpose(input, out_channels,
                                                 **deconv_args)
-            # output = tf.layers.batch_normalization(output,
-            #                                        training=training_flag,
-            #                                        **batchnorm_args)
+            output = tf.layers.batch_normalization(output,
+                                                   **batchnorm_args)
 
             if dropout > 0.0:
                 output = tf.layers.dropout(output, rate=dropout,
@@ -127,9 +127,7 @@ def model_fn(features, labels, mode, params):
     # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
     with tf.variable_scope("decoder_1"):
         input = tf.concat([layers[-1], layers[0]], axis=4)
-        this_args = deconv_args.copy()
-        this_args['activation'] = None
-        output = tf.layers.conv3d_transpose(input, 1, **this_args)
+        output = tf.layers.conv3d_transpose(input, 1, **deconv_args)
         layers.append(output)
 
     predictions = tf.squeeze(layers[-1], -1)
