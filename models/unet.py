@@ -51,7 +51,7 @@ def model_fn(features, labels, mode, params):
                       "center": True,
                       "beta_initializer": tf.zeros_initializer(),
                       "name": "batchnorm",
-                      "training": mode == tf.estimator.ModeKeys.TRAIN}
+                      "training": training_flag}
 
     def pad_and_conv(input, out_channels, conv_args):
         padded_input = tf.pad(input,
@@ -63,17 +63,18 @@ def model_fn(features, labels, mode, params):
 
     # encoder_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ngf]
     with tf.variable_scope("encoder_1"):
-        output = pad_and_conv(input_images_placeholder, ngf, conv_args)
+        this_args = conv_args.copy()
+        output = pad_and_conv(input_images_placeholder, ngf, this_args)
         layers.append(output)
 
     layer_specs = [
-        (ngf * 2, 0.5),
+        (ngf * 2, 0.2),
         # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
-        (ngf * 2, 0.5),
+        (ngf * 2, 0.2),
         # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
-        (ngf * 4, 0.5),
+        (ngf * 4, 0.2),
         #encoder_4: [batch, 32, 32, ngf * 4] => [batch, 16, 16, ngf * 8]
-        (ngf * 8, 0.5),
+        (ngf * 8, 0.2),
         # encoder_5: [batch, 16, 16, ngf * 8] => [batch, 8, 8, ngf * 8]
         # ngf * 8,
         # # encoder_6: [batch, 8, 8, ngf * 8] => [batch, 4, 4, ngf * 8]
@@ -92,13 +93,13 @@ def model_fn(features, labels, mode, params):
     layer_specs = [
         # (ngf * 8, 0.5),
         # # decoder_6: [batch, 4, 4, ngf * 8 * 2] => [batch, 8, 8, ngf * 8 * 2]
-        (ngf * 8, 0.5),
+        (ngf * 8, 0.2),
         # decoder_5: [batch, 8, 8, ngf * 8 * 2] => [batch, 16, 16, ngf * 8 * 2]
-        (ngf * 4, 0.5),
+        (ngf * 4, 0.2),
         # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
-        (ngf * 2, 0.5),
+        (ngf * 2, 0.2),
         # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
-        (ngf * 2, 0.5),
+        (ngf * 2, 0.2),
         # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
     ]
 
@@ -127,7 +128,9 @@ def model_fn(features, labels, mode, params):
     # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
     with tf.variable_scope("decoder_1"):
         input = tf.concat([layers[-1], layers[0]], axis=4)
-        output = tf.layers.conv3d_transpose(input, 1, **deconv_args)
+        this_args = deconv_args.copy()
+        this_args['activation'] = None
+        output = tf.layers.conv3d_transpose(input, 1, **this_args)
         layers.append(output)
 
     predictions = tf.squeeze(layers[-1], -1)
