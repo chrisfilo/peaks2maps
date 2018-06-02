@@ -23,6 +23,12 @@ def get_checkpoint_dir():
 
 
 def peaks2maps(contrasts_coordinates, contrasts_output_filenames):
+    """
+
+    :param contrasts_coordinates:
+    :param contrasts_output_filenames:
+    :return:
+    """
     import tensorflow as tf
     tf.logging.set_verbosity(tf.logging.DEBUG)
     import models.unet as model
@@ -50,7 +56,9 @@ def peaks2maps(contrasts_coordinates, contrasts_output_filenames):
     model = tf.estimator.Estimator(model.model_fn, model_dir=get_checkpoint_dir())
     for output_filename in contrasts_output_filenames:
         results = model.predict(generate_input_fn)
-        save_nii(next(results), target_shape, output_filename)
+        results = [result for result in results]
+        assert len(results) == 1
+        save_nii(results[0], target_shape, output_filename)
 
 
 if __name__ == '__main__':
