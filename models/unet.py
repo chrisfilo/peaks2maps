@@ -2,6 +2,7 @@ import tensorflow as tf
 from functools import reduce
 import math
 import numpy as np
+from tensorflow.python.estimator.export.export_output import PredictOutput
 
 from .utils import get_evaluation_hooks, metric_fn
 
@@ -138,7 +139,8 @@ def model_fn(features, labels, mode, params):
     if mode == tf.estimator.ModeKeys.PREDICT:
         return tf.estimator.EstimatorSpec(
             mode=mode,
-            predictions=predictions
+            predictions=predictions,
+            export_outputs={tf.saved_model.signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY: PredictOutput(predictions)}
         )
     else:
         labels, filenames = labels
@@ -163,7 +165,8 @@ def model_fn(features, labels, mode, params):
                                       predictions),
             evaluation_hooks=get_evaluation_hooks(features, labels,
                                                   predictions, filenames,
-                                                  mode, params)
+                                                  mode, params),
+            export_outputs={"output": predictions}
         )
 
 

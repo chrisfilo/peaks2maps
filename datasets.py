@@ -45,6 +45,8 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
             nii = nb.load(path_str)
             data = nii.get_data()
             data[np.isnan(data)] = 0
+            m = np.max(np.abs(data))
+            data = data / m
             nii = nb.Nifti1Image(data, nii.affine)
             nii = image.resample_img(nii,
                                      target_affine=target_affine,
@@ -72,14 +74,17 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
 
         smoothed_ds = None
         for smoothness_level in smoothness_levels:
-            tmp_smooth_ds = data_ds.map(
-                lambda data, filename: tuple(tf.py_func(_smooth,
-                                                        [data, filename,
-                                                         target_affine,
-                                                         tf.constant(smoothness_level)],
-                                                        [np.float32, tf.string],
-                                                        name="smooth")),
-                num_parallel_calls=2)
+            if smoothness_level:
+                tmp_smooth_ds = data_ds.map(
+                    lambda data, filename: tuple(tf.py_func(_smooth,
+                                                            [data, filename,
+                                                             target_affine,
+                                                             tf.constant(smoothness_level)],
+                                                            [np.float32, tf.string],
+                                                            name="smooth")),
+                    num_parallel_calls=2)
+            else:
+                tmp_smooth_ds = data_ds
 
             if smoothed_ds is None:
                 smoothed_ds = tmp_smooth_ds
@@ -107,8 +112,8 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
             for j in range(1, n_features+1):
                 if (labels == j).sum() < 5:
                     labels[labels == j] = 0
-            peaks = peak_local_max(data, indices=False, min_distance=0,
-                                   num_peaks_per_label=1,
+            peaks = peak_local_max(data, indices=False, min_distance=1,
+                                   num_peaks_per_label=45,
                                    labels=labels,
                                    threshold_abs=cluster_forming_thr).astype(np.float32)
             peaks[peaks > 0] = 1.0
@@ -148,7 +153,8 @@ def _get_data(nthreads, batch_size, src_folder, n_epochs, cache, shuffle,
         tf.contrib.data.parallel_interleave(
             lambda path: read_and_augument(path, target_shape),
             cycle_length=4))
-    dataset = dataset.cache(cache)
+    if cache:
+        dataset = dataset.cache(cache)
 
     if shuffle:
         dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(1000, n_epochs))
@@ -180,12 +186,12 @@ class Peaks2MapsDataset:
                                                              self.train_batch_size,
                                                              "D:/data/neurovault/neurovault/vetted/train",
                                                              self.n_epochs,
-                                                             'D:/drive/workspace/peaks2maps/cache_train_aug',
+                                                             'D:/drive/workspace/peaks2maps/cache_train_new_thr',
                                                              True,
                                                              self.target_shape,
                                                              True,
-                                                             smoothness_levels=[4, 6, 8],
-                                                             cluster_forming_thrs=[0.6, 0.65, 0.7])
+                                                             smoothness_levels=[0],
+                                                             cluster_forming_thrs=[0.6])
 
         # You can use feedable iterators with a variety of different kinds of iterator
         # (such as one-shot and initializable iterators).
@@ -195,15 +201,15 @@ class Peaks2MapsDataset:
     def eval_input_fn(self):
         self.validation_dataset, validation_shape = _get_data(8,
                                                               self.validation_batch_size,
-                                                              "D:/data/neurovault/neurovault/vetted/eval", #!!!
+                                                              "G:/My Drive/data/neurovault/neurovault/vetted/eval", #!!!
                                                               #"D:/data/hcp_statmaps/val_all_tasks",
                                                               1,
-                                                              'D:/drive/workspace/peaks2maps/cache_eval',
+                                                              False,
                                                               False,
                                                               self.target_shape,
                                                               False,
-                                                              smoothness_levels=[6],
-                                                              cluster_forming_thrs=[0.65])
+                                                              smoothness_levels=[8],
+                                                              cluster_forming_thrs=[0.6])
 
         self.validation_iterator = self.validation_dataset.make_one_shot_iterator()
         return self.validation_iterator.get_next()
